@@ -1,17 +1,15 @@
-// Widget tests for the shell itself: the surface coordination that used to
-// break (the launcher staying open behind the settings window), the tap-away
-// behaviour, and the virtual-desktop panel.
+// Widget tests for the shell: surface coordination, tap-away, the in-app
+// workspaces and the launcher strip.
 //
-// The radios, the sound and the desktops run on recorders, so a test never
-// spawns PowerShell, never moves the machine's volume and never presses a
-// Windows shortcut.
+// The radios and the sound run on recorders, so a test never spawns
+// PowerShell and never touches the machine's volume. The workspace tests use
+// the real controller — it lives entirely inside the app.
 //
 // Run with: flutter test
 
 import 'package:exp_desktop/main.dart';
 import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/sound_control.dart';
-import 'package:exp_desktop/virtual_desktops.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -19,20 +17,19 @@ void main() {
   testWidgets('the shell draws on startup', (tester) async {
     await _pumpShell(tester);
 
-    // The nine-dot pill in the dock is always there.
-    expect(find.byKey(const ValueKey('launcher-pill')), findsOneWidget);
+    expect(find.byKey(const ValueKey('apps-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('desktop-dots')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('opening the settings window closes the nine-dot launcher',
+  testWidgets('opening the settings window closes the launcher',
       (tester) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
     expect(find.text('Калькулятор'), findsOneWidget);
 
-    // The Wi-Fi button in the top bar opens the shell's own settings.
     await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
     await _settle(tester);
 
@@ -49,7 +46,7 @@ void main() {
     await _settle(tester);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
 
-    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
 
     expect(find.text('Wi-Fi & internet'), findsNothing);
@@ -72,7 +69,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('topbar-volume')));
     await _settle(tester);
 
-    // Volume is a flyout: the settings window must survive it.
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
@@ -91,11 +87,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tapping the desktop closes the nine-dot launcher',
-      (tester) async {
+  testWidgets('tapping the desktop closes the launcher', (tester) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
     expect(find.text('Калькулятор'), findsOneWidget);
 
@@ -116,65 +111,122 @@ void main() {
     await tester.tapAt(const Offset(240, 860));
     await _settle(tester);
 
-    // A window, not a flyout: it keeps its title bar and its place.
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the four dots open the virtual desktops panel', (tester) async {
-    final desktops = _FakeDesktops();
-    await _pumpShell(tester, desktops: desktops);
+  testWidgets('the launcher panel carries the action strip', (tester) async {
+    await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
 
-    for (final action in VirtualDesktopAction.values) {
-      expect(find.text(action.label), findsOneWidget);
-    }
-
-    await tester.tap(find.text(VirtualDesktopAction.create.label));
-    await _settle(tester);
-
-    expect(desktops.performed, [VirtualDesktopAction.create]);
-    // The panel closes behind the action.
-    expect(find.text(VirtualDesktopAction.create.label), findsNothing);
+    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.byKey(const ValueKey('launcher-settings')), findsOneWidget);
+    expect(find.byKey(const ValueKey('launcher-power')), findsOneWidget);
+    expect(find.byKey(const ValueKey('launcher-terminal')), findsOneWidget);
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Питание'), findsOneWidget);
+    expect(find.text('Терминал'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tapping the desktop closes the virtual desktops panel',
-      (tester) async {
-    await _pumpShell(tester, desktops: _FakeDesktops());
+  testWidgets('the strip opens the built-in settings', (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('launcher-settings')));
+    await _settle(tester);
+
+    // The shell's own window, on its landing pane.
+    expect(find.text('Select an item'), findsOneWidget);
+    expect(find.text('Калькулятор'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the workspace pill opens the workspace panel', (tester) async {
+    await _pumpShell(tester);
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-    expect(find.text(VirtualDesktopAction.next.label), findsOneWidget);
+
+    expect(find.text('Рабочий стол 1 из 1'), findsOneWidget);
+    expect(find.text('Новый'), findsOneWidget);
+    expect(find.text('Закрыть'), findsOneWidget);
+
+    await tester.tap(find.text('Новый'));
+    await _settle(tester);
+
+    // One dot per desktop, and the panel is gone.
+    expect(find.byKey(const ValueKey('workspace-dot-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('workspace-dot-1')), findsOneWidget);
+    expect(find.text('Новый'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a workspace chip selects that desktop', (tester) async {
+    await _pumpShell(tester);
+
+    // Create a second desktop from the panel.
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    await tester.tap(find.text('Новый'));
+    await _settle(tester);
+
+    // The new desktop is active: its dot in the dock is the tall one.
+    expect(tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height,
+        greaterThan(
+            tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height));
+
+    // Jump back with the chip: the highlight follows.
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    expect(find.text('Рабочий стол 2 из 2'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('workspace-chip-0')));
+    await _settle(tester);
+
+    expect(find.text('Рабочий стол 1 из 2'), findsOneWidget);
+    expect(tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height,
+        greaterThan(
+            tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the desktop closes the workspace panel', (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    expect(find.text('Новый'), findsOneWidget);
 
     await tester.tapAt(const Offset(240, 700));
     await _settle(tester);
 
-    expect(find.text(VirtualDesktopAction.next.label), findsNothing);
+    expect(find.text('Новый'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the four dots and the nine dots are different surfaces',
+  testWidgets('the workspace panel and the launcher are different surfaces',
       (tester) async {
-    await _pumpShell(tester, desktops: _FakeDesktops());
+    await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
     expect(find.text('Калькулятор'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
 
-    // Opening the desktops closes the launcher: one surface at a time.
+    // Opening the workspaces closes the launcher: one surface at a time.
     expect(find.text('Калькулятор'), findsNothing);
-    expect(find.text(VirtualDesktopAction.overview.label), findsOneWidget);
+    expect(find.text('Новый'), findsOneWidget);
   });
 
   testWidgets('the buildings fit a 1366x768 screen', (tester) async {
     await _pumpShell(tester, size: const Size(1366, 768));
-    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
     await tester.tap(find.byKey(const ValueKey('topbar-volume')));
     await _settle(tester);
@@ -192,35 +244,23 @@ void main() {
 Future<void> _pumpShell(
   WidgetTester tester, {
   Size size = const Size(1600, 900),
-  VirtualDesktopSink? desktops,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(MaterialApp(
-    home: MyHomePage(
-      radio: _FakeRadio(),
-      sound: _FakeSound(),
-      desktops: desktops ?? _FakeDesktops(),
-    ),
+    home: MyHomePage(radio: _FakeRadio(), sound: _FakeSound()),
   ));
   await _settle(tester);
 }
 
 /// The shell keeps a 1 s clock and a 12 s wallpaper timer running, so
 /// `pumpAndSettle` would never return. 90 frames is enough for the springs.
-Future<void> _settle(WidgetTester tester, {int frames = 90}) async {
+Future<void> _settle(WidgetTester tester, {int frames = 220}) async {
   for (var i = 0; i < frames; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
-}
-
-class _FakeDesktops implements VirtualDesktopSink {
-  final List<VirtualDesktopAction> performed = [];
-
-  @override
-  void perform(VirtualDesktopAction action) => performed.add(action);
 }
 
 class _FakeSound implements SoundSource {

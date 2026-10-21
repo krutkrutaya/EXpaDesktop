@@ -68,7 +68,7 @@ All three sliders use the same wavy WaveSlider as the player.
 
 - A 145 px clock, wallpapers rotating every 12 seconds with a crossfade
 - Top panel with "glass" (BackdropFilter): apps, mini-player, bluetooth / volume / wi-fi
-- Right dock: the apps button, four dots for virtual desktops and nine dots for the launcher
+- Right dock: the apps button (launcher) and a vertical column of workspace dots, one per desktop, the current one lit
 - Power menu behind the apps button (lock / sign out / restart / sleep / shutdown / settings)
 - Settings window: 7 sections, draggable by its title bar, minimizes into the dock, opens on a bouncy spring
 
@@ -119,7 +119,7 @@ ExDesktop/
 │   ├── command_router.dart      # phrases → intents → machine actions
 │   ├── shell_layout.dart        # where every panel sits, as testable numbers
 │   ├── shell_panels.dart        # which surface may share the screen with which
-│   ├── virtual_desktops.dart    # Win+Ctrl chords for the desktop switcher
+│   ├── workspaces.dart          # in-app desktops: wallpaper per desktop
 │   ├── id3_art.dart             # title / artist / cover from the mp3 tags
 │   ├── track_art.dart           # one artwork rule: cover, asset, placeholder
 │   ├── liquid_glass/            # 🔬 physics & widgets
@@ -141,11 +141,11 @@ ExDesktop/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    ├── shell_check.dart              # 🧪 310 layout/policy/ID3/desktop checks
+    ├── shell_check.dart              # 🧪 311 layout/policy/ID3/workspace checks
     ├── system_mock_check.dart        # 🧪 415 system + assistant mock tests
     └── widget/
         ├── settings_app_test.dart    # 🧪 11 widget tests: panes, switches
-        ├── shell_test.dart           # 🧪 12 widget tests: surfaces, tap-away, desktops
+        ├── shell_test.dart           # 🧪 15 widget tests: surfaces, tap-away, workspaces
         └── track_art_test.dart       # 🧪 4 widget tests: artwork fallbacks
 ```
 
@@ -228,16 +228,16 @@ copies the DLL next to the exe when it is there, and skips it otherwise.
 
 Widget tests run under `flutter test`; the system, shell and physics suites are
 plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
-prints a single total — **778 checks**, plus **27 widget tests**.
+prints a single total — **779 checks**, plus **30 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 27 widget tests
+flutter test                                 # 30 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 778 mock checks
+dart run test/mock_all.dart                  # 779 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
 dart run test/system_mock_check.dart         # system + assistant, 415 checks
-dart run test/shell_check.dart               # layout, panels, ID3, desktops: 310 checks
+dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 311 checks
 ```
 
 ```

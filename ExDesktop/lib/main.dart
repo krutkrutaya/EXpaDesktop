@@ -13,7 +13,7 @@ import 'system_actions.dart' as sys;
 import 'command_router.dart';
 import 'id3_art.dart';
 import 'shell_layout.dart';
-import 'virtual_desktops.dart';
+import 'workspaces.dart';
 import 'radio_control.dart';
 import 'shell_panels.dart';
 import 'sound_control.dart';
@@ -53,13 +53,12 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, this.radio, this.sound, this.desktops});
+  const MyHomePage({super.key, this.radio, this.sound});
 
   /// Test seams: the widget tests pass recorders so no test spawns
   /// PowerShell or moves the machine's volume.
   final RadioSource? radio;
   final SoundSource? sound;
-  final VirtualDesktopSink? desktops;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -77,7 +76,8 @@ class _MyHomePageState extends State<MyHomePage>
   String _totalDuration = '2:00';
   Duration? _audioDuration;
 
-  int _currentBackgroundIndex = 0;
+  /// In-app desktops: each one keeps its own wallpaper.
+  late final WorkspaceController _workspaces;
   final List<String> _backgrounds = [
     'assets/fons/fon1.jpg',
     'assets/fons/fon2.jpg',
@@ -88,7 +88,6 @@ class _MyHomePageState extends State<MyHomePage>
     'assets/fons/fon8.jpg',
   ];
 
-  bool _isDotsHovered = false;
   bool _isDesktopsHovered = false;
   bool _isTopPanelHovered = false;
   bool _isPlaying = false;
@@ -132,8 +131,6 @@ class _MyHomePageState extends State<MyHomePage>
   late final CommandRouter _router;
 
   RadioSource get _radioSource => widget.radio ?? RadioControl.instance;
-  VirtualDesktopSink get _desktopSink =>
-      widget.desktops ?? VirtualDesktopController.instance;
   SoundSource get _soundSource => widget.sound ?? SoundControl.instance;
 
   double _brightness = 0.7;
@@ -242,6 +239,7 @@ class _MyHomePageState extends State<MyHomePage>
   void initState() {
     super.initState();
     _timeString = _formatTime(DateTime.now());
+    _workspaces = WorkspaceController(backgroundCount: _backgrounds.length);
     _loadBrightnessLib();
     _initAudioPlayer();
     _router = CommandRouter(sink: this);
@@ -266,7 +264,7 @@ class _MyHomePageState extends State<MyHomePage>
     _backgroundTimer = Timer.periodic(const Duration(seconds: 12), (timer) {
       if (mounted) {
         setState(() {
-          _currentBackgroundIndex = (_currentBackgroundIndex + 1) % _backgrounds.length;
+          _workspaces.cycleBackground();
         });
       }
     });
@@ -814,11 +812,11 @@ class _MyHomePageState extends State<MyHomePage>
     setState(() {});
   }
 
-  /// Runs a desktop action and closes the panel behind it.
-  void _runDesktopAction(VirtualDesktopAction action) {
-    _desktopSink.perform(action);
+  /// Workspace actions from the docker panel: everything happens inside the
+  /// shell, no Windows desktops involved.
+  void _runWorkspaceAction(void Function() action) {
+    setState(action);
     _desktopsMorph?.close();
-    setState(() {});
   }
 
   /// The four dots in the middle of the dock: virtual desktops.
@@ -882,23 +880,13 @@ class _MyHomePageState extends State<MyHomePage>
             label: 'Задачи',
             onTap: () => unawaited(launchExe('taskmgr.exe')),
           ),
-          _LauncherTile(
-            icon: Icons.terminal_outlined,
-            label: 'Терминал',
-            onTap: () => unawaited(_launchTerminal()),
-          ),
+
           _LauncherTile(
             icon: Icons.public_outlined,
             label: 'Браузер',
             onTap: () => unawaited(launchExe('msedge.exe')),
           ),
-          _LauncherTile(
-            icon: Icons.settings_outlined,
-            label: 'Настройки',
-            // The shell's own settings, not the Windows page: the launcher
-            // is the shell, so its "Settings" tile must stay inside it.
-            onTap: () => _openSettingsAt(null),
-          ),
+
       ];
 
   /// Asks once, then applies: restart, shutdown, sleep and sign-out go
@@ -1235,10 +1223,16 @@ class _MyHomePageState extends State<MyHomePage>
               );
             },
             child: Container(
-              key: ValueKey<int>(_currentBackgroundIndex),
+              key: ValueKey<String>(
+                '${_workspaces.activeIndex}-${_workspaces.active.backgroundIndex}',
+              ),
               decoration: BoxDecoration(
                 image: DecorationImage(
-                  image: AssetImage(_backgrounds[_currentBackgroundIndex]),
+                  image: AssetImage(
+                    _backgrounds[
+                      _workspaces.active.backgroundIndex % _backgrounds.length
+                    ],
+                  ),
                   fit: BoxFit.cover,
                   filterQuality: FilterQuality.high,
                 ),
@@ -1746,21 +1740,44 @@ class _MyHomePageState extends State<MyHomePage>
               return MorphGlass(
                 frame: f,
                 restWidth: 320,
-                restHeight: 210,
+                restHeight: 296,
                 interactive: !morph.animating,
                 child: SizedBox(
                   width: 320,
-                  height: 210,
+                  height: 296,
                   child: Padding(
                     padding: const EdgeInsets.all(11),
-                    // A compact rounded rectangle in the middle of the screen:
-                    // three columns of icons, no tall column of rows.
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      runAlignment: WrapAlignment.center,
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: _launcherTiles,
+                    child: Column(
+                      children: [
+                        // The app grid: a compact rounded rectangle.
+                        SizedBox(
+                          width: 298,
+                          height: 210,
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            runAlignment: WrapAlignment.center,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: _launcherTiles,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        // A strip of shell actions, the same width as the grid.
+                        _LauncherStrip(
+                          onSettings: () {
+                            _launcherMorph?.close();
+                            _openSettingsAt(null);
+                          },
+                          onPower: () {
+                            _launcherMorph?.close();
+                            _toggleMenu();
+                          },
+                          onTerminal: () {
+                            _launcherMorph?.close();
+                            unawaited(_launchTerminal());
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1776,43 +1793,92 @@ class _MyHomePageState extends State<MyHomePage>
               return MorphGlass(
                 frame: f,
                 restWidth: 320,
-                restHeight: 210,
+                restHeight: 250,
                 interactive: !morph.animating,
                 child: SizedBox(
                   width: 320,
-                  height: 210,
+                  height: 250,
                   child: Padding(
                     padding: const EdgeInsets.all(11),
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      runAlignment: WrapAlignment.center,
-                      spacing: 6,
-                      runSpacing: 6,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _LauncherTile(
-                          icon: Icons.add_to_photos_outlined,
-                          label: VirtualDesktopAction.create.label,
-                          onTap: () => _runDesktopAction(VirtualDesktopAction.create),
+                        Text(
+                          'Рабочий стол ${_workspaces.activeIndex + 1} из ${_workspaces.count}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 12),
                         ),
-                        _LauncherTile(
-                          icon: Icons.arrow_forward,
-                          label: VirtualDesktopAction.next.label,
-                          onTap: () => _runDesktopAction(VirtualDesktopAction.next),
+                        const SizedBox(height: 10),
+                        // One chip per desktop: tap to jump straight there.
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            for (var i = 0; i < _workspaces.count; i++)
+                              GestureDetector(
+                                key: ValueKey('workspace-chip-$i'),
+                                onTap: () => setState(() {
+                                  _workspaces.select(i);
+                                }),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: 34,
+                                  height: 30,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(
+                                      alpha: i == _workspaces.activeIndex ? 0.85 : 0.12,
+                                    ),
+                                    borderRadius: BorderRadius.circular(9),
+                                  ),
+                                  child: Text(
+                                    '${i + 1}',
+                                    style: TextStyle(
+                                      color: i == _workspaces.activeIndex
+                                          ? Colors.black
+                                          : Colors.white70,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                        _LauncherTile(
-                          icon: Icons.arrow_back,
-                          label: VirtualDesktopAction.previous.label,
-                          onTap: () => _runDesktopAction(VirtualDesktopAction.previous),
-                        ),
-                        _LauncherTile(
-                          icon: Icons.grid_view,
-                          label: VirtualDesktopAction.overview.label,
-                          onTap: () => _runDesktopAction(VirtualDesktopAction.overview),
-                        ),
-                        _LauncherTile(
-                          icon: Icons.delete_outline,
-                          label: VirtualDesktopAction.close.label,
-                          onTap: () => _runDesktopAction(VirtualDesktopAction.close),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _LauncherTile(
+                              icon: Icons.add_to_photos_outlined,
+                              label: 'Новый',
+                              onTap: () => _runWorkspaceAction(() {
+                                _workspaces.create();
+                              }),
+                            ),
+                            const SizedBox(width: 6),
+                            _LauncherTile(
+                              icon: Icons.arrow_back,
+                              label: 'Назад',
+                              onTap: () => _runWorkspaceAction(_workspaces.previous),
+                            ),
+                            const SizedBox(width: 6),
+                            _LauncherTile(
+                              icon: Icons.arrow_forward,
+                              label: 'Вперёд',
+                              onTap: () => _runWorkspaceAction(_workspaces.next),
+                            ),
+                            const SizedBox(width: 6),
+                            _LauncherTile(
+                              icon: Icons.delete_outline,
+                              label: 'Закрыть',
+                              onTap: () => _runWorkspaceAction(() {
+                                _workspaces.closeActive();
+                              }),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -2041,7 +2107,9 @@ class _MyHomePageState extends State<MyHomePage>
                           ),
                         ),
                       const SizedBox(height: 10),
-                      // Four dots in the middle of the dock: virtual desktops.
+                      // Workspaces: one dot per desktop, the current one lit.
+                      // Tapping a dot jumps straight to it; the pill opens the
+                      // panel with create/close/next/previous.
                       Expanded(
                         child: Center(
                           child: MouseRegion(
@@ -2061,8 +2129,36 @@ class _MyHomePageState extends State<MyHomePage>
                                   ),
                                   borderRadius: BorderRadius.circular(15.0),
                                 ),
+                                // The dots are their own tap targets and sit
+                                // inside the pill, so a tap on one selects a
+                                // desktop instead of opening the panel.
                                 child: Center(
-                                  child: DotsGrid(count: 4, active: _isDesktopsOpen),
+                                  child: SizedBox(
+                                    height: 40,
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        // One dot per desktop, the active one
+                                        // elongated. Indicators only: the pill
+                                        // opens the panel where you switch.
+                                        for (var i = 0; i < _workspaces.count; i++) ...[
+                                          if (i > 0) const SizedBox(height: 5),
+                                          AnimatedContainer(
+                                            key: ValueKey('workspace-dot-$i'),
+                                            duration: const Duration(milliseconds: 160),
+                                            width: 8,
+                                            height: i == _workspaces.activeIndex ? 14 : 8,
+                                            decoration: BoxDecoration(
+                                              color: i == _workspaces.activeIndex
+                                                  ? Colors.white
+                                                  : Colors.white.withValues(alpha: 0.35),
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -2070,37 +2166,14 @@ class _MyHomePageState extends State<MyHomePage>
                         ),
                       ),
                       const SizedBox(height: 10),
+                      // Apps button: opens the launcher. The power menu moved
+                      // into the strip under the app grid.
                       PanelIcon(
-                        icon: _isMenuOpen ? Icons.close : Icons.apps,
-                        onTap: _toggleMenu,
+                        key: const ValueKey('apps-button'),
+                        icon: _isLauncherOpen ? Icons.close : Icons.apps,
+                        onTap: _toggleLauncher,
                         spacing: 1.0,
-                      ),
-                      const SizedBox(height: 6),
-                      // Nine dots at the bottom: the app launcher.
-                      MouseRegion(
-                        onEnter: (event) => setState(() => _isDotsHovered = true),
-                        onExit: (event) => setState(() => _isDotsHovered = false),
-                        child: GestureDetector(
-                          key: const ValueKey('launcher-pill'),
-                          onTap: _toggleLauncher,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeInOut,
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(
-                                alpha: _isLauncherOpen || _isDotsHovered ? 0.16 : 0.08,
-                              ),
-                              borderRadius: BorderRadius.circular(_isDotsHovered ? 15.0 : 20.0),
-                            ),
-                            child: Center(
-                              child: DotsGrid(count: 9, active: _isLauncherOpen),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                      ),                    ],
                   ),
                 ),
               ),
@@ -2294,46 +2367,120 @@ class _LauncherTileState extends State<_LauncherTile> {
   }
 }
 
-/// A grid of dots: 9 for the launcher, 4 for the virtual desktops.
-class DotsGrid extends StatelessWidget {
-  final int count;
-  final bool active;
+/// The horizontal strip under the app grid: the shell actions that used to
+/// live in the dock. Same width as the grid above it.
+class _LauncherStrip extends StatelessWidget {
+  final VoidCallback onSettings;
+  final VoidCallback onPower;
+  final VoidCallback onTerminal;
 
-  const DotsGrid({super.key, required this.count, this.active = false});
+  const _LauncherStrip({
+    required this.onSettings,
+    required this.onPower,
+    required this.onTerminal,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final columns = count == 9 ? 3 : 2;
-    final dot = count == 9 ? 4.0 : 5.0;
-    final gap = count == 9 ? 4.0 : 5.0;
-    final color = active ? Colors.white : Colors.white.withValues(alpha: 0.75);
-
-    return SizedBox(
-      width: columns * dot + (columns - 1) * gap,
-      height: columns * dot + (columns - 1) * gap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return Container(
+      width: 298,
+      height: 58,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.10),
+          width: 1,
+        ),
+      ),
+      // Equal thirds: a long label can never push its neighbour out of the
+      // strip (an ellipsis is cheaper than an overflow).
+      child: Row(
         children: [
-          for (var row = 0; row < columns; row++) ...[
-            if (row > 0) SizedBox(height: gap),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (var col = 0; col < columns; col++) ...[
-                  if (col > 0) SizedBox(width: gap),
-                  Container(
-                    width: dot,
-                    height: dot,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: color,
-                    ),
-                  ),
-                ],
-              ],
+          Expanded(
+            child: _LauncherAction(
+              key: const ValueKey('launcher-settings'),
+              icon: Icons.settings_outlined,
+              label: 'Настройки',
+              onTap: onSettings,
             ),
-          ],
+          ),
+          Expanded(
+            child: _LauncherAction(
+              key: const ValueKey('launcher-power'),
+              icon: Icons.power_settings_new,
+              label: 'Питание',
+              onTap: onPower,
+            ),
+          ),
+          Expanded(
+            child: _LauncherAction(
+              key: const ValueKey('launcher-terminal'),
+              icon: Icons.terminal_outlined,
+              label: 'Терминал',
+              onTap: onTerminal,
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _LauncherAction extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _LauncherAction({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_LauncherAction> createState() => _LauncherActionState();
+}
+
+class _LauncherActionState extends State<_LauncherAction> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (event) => setState(() => _hovered = true),
+      onExit: (event) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 130),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? Colors.white.withValues(alpha: 0.14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(widget.icon, size: 18, color: Colors.white),
+              const SizedBox(height: 3),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 9),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

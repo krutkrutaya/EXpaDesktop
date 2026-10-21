@@ -16,7 +16,7 @@ import 'dart:typed_data';
 import 'package:exp_desktop/id3_art.dart';
 import 'package:exp_desktop/shell_layout.dart';
 import 'package:exp_desktop/shell_panels.dart';
-import 'package:exp_desktop/virtual_desktops.dart';
+import 'package:exp_desktop/workspaces.dart';
 
 import 'mock_harness.dart';
 
@@ -25,7 +25,7 @@ void runShellChecks() {
   testLayoutNumbers();
   testPanelPolicy();
   testId3Reader();
-  testVirtualDesktopChords();
+  testWorkspaces();
 }
 
 void main() {
@@ -87,7 +87,7 @@ void testLayoutNumbers() {
     check('$label: the launcher is wider than it is tall',
         layout.launcherRect[2] > layout.launcherRect[3]);
     check('$label: the launcher is compact',
-        layout.launcherRect[2] <= 400 && layout.launcherRect[3] <= 260);
+        layout.launcherRect[2] <= 400 && layout.launcherRect[3] <= 320);
     checkClose(
       '$label: the launcher is vertically centred',
       layout.launcherRect[1] + layout.launcherRect[3] / 2,
@@ -324,55 +324,72 @@ void testId3Reader() {
       wide?.cover != null && wide!.cover!.length == png.length);
 }
 
-// ---- virtual desktops ----------------------------------------------------------
+// ---- in-app workspaces ---------------------------------------------------------
 
-void testVirtualDesktopChords() {
-  section('[virtual desktops]');
+void testWorkspaces() {
+  section('[workspaces]');
 
-  const win = VirtualDesktopController.vkLeftWin;
-  const ctrl = VirtualDesktopController.vkControl;
+  final w = WorkspaceController(backgroundCount: 8);
+  checkEquals('starts with one desktop', w.count, 1);
+  checkEquals('the first desktop is active', w.activeIndex, 0);
+  check('the last desktop cannot be closed', !w.canClose);
+  check('a desktop can be created', w.canCreate);
 
-  checkEquals(
-    'create is Win+Ctrl+D',
-    VirtualDesktopController.chordFor(VirtualDesktopAction.create),
-    [win, ctrl, VirtualDesktopController.vkD],
-  );
-  checkEquals(
-    'next is Win+Ctrl+Right',
-    VirtualDesktopController.chordFor(VirtualDesktopAction.next),
-    [win, ctrl, VirtualDesktopController.vkRight],
-  );
-  checkEquals(
-    'previous is Win+Ctrl+Left',
-    VirtualDesktopController.chordFor(VirtualDesktopAction.previous),
-    [win, ctrl, VirtualDesktopController.vkLeft],
-  );
-  checkEquals(
-    'close is Win+Ctrl+F4',
-    VirtualDesktopController.chordFor(VirtualDesktopAction.close),
-    [win, ctrl, VirtualDesktopController.vkF4],
-  );
-  checkEquals(
-    'overview is Win+Tab',
-    VirtualDesktopController.chordFor(VirtualDesktopAction.overview),
-    [win, VirtualDesktopController.vkTab],
-  );
+  var notified = 0;
+  void listener() => notified++;
+  w.addListener(listener);
 
-  for (final action in VirtualDesktopAction.values) {
-    check('${action.name}: has a caption', action.label.isNotEmpty);
-    check('${action.name}: presses something',
-        VirtualDesktopController.chordFor(action).isNotEmpty);
-    check('${action.name}: the chord does not end on the Windows key',
-        VirtualDesktopController.chordFor(action).last != win);
+  checkEquals('create returns true', w.create(), true);
+  checkEquals('create adds a desktop', w.count, 2);
+  checkEquals('create switches to it', w.activeIndex, 1);
+  check('the new desktop has a different wallpaper',
+      w.items[0].backgroundIndex != w.items[1].backgroundIndex);
+  checkEquals('create notifies listeners', notified, 1);
+  check('two desktops can be closed', w.canClose);
+
+  w.select(0);
+  checkEquals('select switches', w.activeIndex, 0);
+  checkEquals('select notifies', notified, 2);
+  w.select(0);
+  checkEquals('selecting the active one stays quiet', notified, 2);
+  w.select(99);
+  checkEquals('out of range select is ignored', w.activeIndex, 0);
+  w.select(-1);
+  checkEquals('negative select is ignored', w.activeIndex, 0);
+
+  w.next();
+  checkEquals('next wraps forward', w.activeIndex, 1);
+  w.next();
+  checkEquals('next wraps around', w.activeIndex, 0);
+  w.previous();
+  checkEquals('previous wraps backwards', w.activeIndex, 1);
+
+  final before = w.active.backgroundIndex;
+  w.cycleBackground();
+  check('the slideshow changes the active wallpaper',
+      w.active.backgroundIndex != before);
+
+  // Fill the dock up to the limit.
+  while (w.canCreate) {
+    w.create();
   }
+  checkEquals('the dock stops at the maximum', w.count, WorkspaceController.maxWorkspaces);
+  checkEquals('no more desktops can be created', w.create(), false);
 
-  final desktops = PanelPolicy.plan(ShellPanel.desktops);
-  check('desktops closes the volume flyout',
-      desktops.toClose.contains(ShellPanel.volume));
-  check('desktops closes the brightness flyout',
-      desktops.toClose.contains(ShellPanel.brightness));
-  check('desktops leaves the settings window alone',
-      !desktops.toClose.contains(ShellPanel.settings));
-  check('desktops does not minimise the settings window',
-      !desktops.minimizeSettings);
+  // Close them all back down to one.
+  while (w.canClose) {
+    w.closeActive();
+  }
+  checkEquals('closing keeps the last desktop', w.count, 1);
+  checkEquals('the last desktop cannot be closed', w.closeActive(), false);
+  checkEquals('the active index stays valid', w.activeIndex, 0);
+
+  // A fresh controller starts from zero, with no wallpaper repeats.
+  final all = WorkspaceController(backgroundCount: 4);
+  while (all.canCreate) {
+    all.create();
+  }
+  final wallpapers = all.items.map((w) => w.backgroundIndex).toList();
+  check('created desktops do not repeat a wallpaper while free ones exist',
+      wallpapers.toSet().length == 4);
 }

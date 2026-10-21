@@ -54,14 +54,14 @@ class ShellLayout {
   // ---- virtual desktops (the four dots in the middle of the dock) ---------
   Rect4 get desktopsButton => [width - 76, height / 2 - 26, 52, 52];
   Rect4 get desktopsRect =>
-      [dockLeft - dockGap - 320, height / 2 - 105, 320, 210];
+      [dockLeft - dockGap - 320, height / 2 - 125, 320, 250];
 
   // ---- launcher (the nine dots at the bottom of the dock) ------------------
   Rect4 get launcherButton => [width - 76, height - 72, 52, 52];
 
   /// A compact landscape rectangle: three columns of icons, not a tall
-  /// column of rows.
-  Rect4 get launcherRect => [width / 2 - 160, height / 2 - 105, 320, 210];
+  /// The app grid plus the action strip under it.
+  Rect4 get launcherRect => [width / 2 - 160, height / 2 - 148, 320, 296];
 
   // ---- the settings window -------------------------------------------------
   Rect4 get settingsRect => [width / 2 - 425, height / 2 - 260, 850, 520];
