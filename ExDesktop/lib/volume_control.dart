@@ -170,30 +170,44 @@ typedef _GetMuteNative = Int32 Function(Pointer<Void> self, Pointer<Int32> outMu
 typedef _GetMuteDart = int Function(Pointer<Void> self, Pointer<Int32> outMute);
 
 // Resolve vtable[index] for a typed signature: the interface pointer's first
-// field holds the vtable address; each entry sits at index * pointer size.
-_GetDefaultEndpointDart _fnGetDefault(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 4 * _ptrSize,
-    ).cast<NativeFunction<_GetDefaultEndpointNative>>().asFunction();
+// field holds the vtable address; each slot sits at index * pointer size and
+// ITSELF holds the function pointer — so the slot is read first (a plain
+// pointer deref), then the value is interpreted as the typed entry point.
+_GetDefaultEndpointDart _fnGetDefault(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 4 * _ptrSize)
+    .cast<Pointer<NativeFunction<_GetDefaultEndpointNative>>>()
+    .value
+    .asFunction<_GetDefaultEndpointDart>();
 
-_ActivateDart _fnActivate(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 3 * _ptrSize,
-    ).cast<NativeFunction<_ActivateNative>>().asFunction();
+_ActivateDart _fnActivate(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 3 * _ptrSize)
+    .cast<Pointer<NativeFunction<_ActivateNative>>>()
+    .value
+    .asFunction<_ActivateDart>();
 
-_SetMasterDart _fnSetMaster(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 7 * _ptrSize,
-    ).cast<NativeFunction<_SetMasterNative>>().asFunction();
+_SetMasterDart _fnSetMaster(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 7 * _ptrSize)
+    .cast<Pointer<NativeFunction<_SetMasterNative>>>()
+    .value
+    .asFunction<_SetMasterDart>();
 
-_GetMasterDart _fnGetMaster(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 9 * _ptrSize,
-    ).cast<NativeFunction<_GetMasterNative>>().asFunction();
+_GetMasterDart _fnGetMaster(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 9 * _ptrSize)
+    .cast<Pointer<NativeFunction<_GetMasterNative>>>()
+    .value
+    .asFunction<_GetMasterDart>();
 
-_SetMuteDart _fnSetMute(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 14 * _ptrSize,
-    ).cast<NativeFunction<_SetMuteNative>>().asFunction();
+_SetMuteDart _fnSetMute(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 14 * _ptrSize)
+    .cast<Pointer<NativeFunction<_SetMuteNative>>>()
+    .value
+    .asFunction<_SetMuteDart>();
 
-_GetMuteDart _fnGetMute(Pointer<Void> self) => Pointer.fromAddress(
-      self.cast<IntPtr>().value + 15 * _ptrSize,
-    ).cast<NativeFunction<_GetMuteNative>>().asFunction();
+_GetMuteDart _fnGetMute(Pointer<Void> self) => Pointer
+    .fromAddress(self.cast<IntPtr>().value + 15 * _ptrSize)
+    .cast<Pointer<NativeFunction<_GetMuteNative>>>()
+    .value
+    .asFunction<_GetMuteDart>();
 
 // ---- public surface ---------------------------------------------------------
 
