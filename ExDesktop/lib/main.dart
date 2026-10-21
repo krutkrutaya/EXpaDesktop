@@ -715,8 +715,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       ];
 
   /// Asks once, then applies: restart, shutdown, sleep and sign-out go
-  /// through this so one accidental press cannot turn the PC off.
-  void _confirmThen(Future<void> action, String question) {
+  /// through this so one accidental press cannot turn the PC off. Takes the
+  /// action unstarted — it fires only after the user confirms.
+  void _confirmThen(Future<void> Function() action, String question) {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -741,7 +742,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           TextButton(
             onPressed: () {
               Navigator.of(ctx).pop();
-              unawaited(action);
+              unawaited(action());
             },
             child: const Text(
               'Да',
@@ -1333,7 +1334,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            _PowerButton(
+                            const _PowerButton(
                               icon: Icons.lock_outline,
                               onTap: lockWorkstation,
                             ),
