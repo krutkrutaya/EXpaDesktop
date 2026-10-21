@@ -16,6 +16,7 @@ import 'dart:typed_data';
 import 'package:exp_desktop/id3_art.dart';
 import 'package:exp_desktop/shell_layout.dart';
 import 'package:exp_desktop/shell_panels.dart';
+import 'package:exp_desktop/virtual_desktops.dart';
 
 import 'mock_harness.dart';
 
@@ -24,6 +25,7 @@ void runShellChecks() {
   testLayoutNumbers();
   testPanelPolicy();
   testId3Reader();
+  testVirtualDesktopChords();
 }
 
 void main() {
@@ -63,6 +65,14 @@ void testLayoutNumbers() {
     check(
       '$label: the sound flyout ends before the dock starts',
       layout.volumeRect[0] + layout.volumeRect[2] <= layout.dockLeft,
+    );
+
+    // The four-dot desktop button sits inside the dock too.
+    final dotsCentre = layout.desktopsButton[0] + layout.desktopsButton[2] / 2;
+    check(
+      '$label: the desktop dots sit inside the dock',
+      dotsCentre >= layout.dockLeft &&
+          dotsCentre <= layout.width - ShellLayout.dockMargin,
     );
 
     // The sound drop has to fly *into* the dock, not sit next to it.
@@ -161,6 +171,16 @@ void testPanelPolicy() {
   check('volume closes the brightness flyout',
       volume.toClose.contains(ShellPanel.brightness));
   check('volume closes the player', volume.toClose.contains(ShellPanel.player));
+  check('volume closes the launcher', volume.toClose.contains(ShellPanel.launcher));
+  check('volume closes the power menu', volume.toClose.contains(ShellPanel.menu));
+
+  // A flyout must never open on top of a centred surface.
+  for (final flyout in [ShellPanel.brightness, ShellPanel.volume, ShellPanel.player, ShellPanel.desktops]) {
+    final plan = PanelPolicy.plan(flyout);
+    check(': closes the launcher', plan.toClose.contains(ShellPanel.launcher));
+    check(': closes the power menu', plan.toClose.contains(ShellPanel.menu));
+    check(': keeps the settings window', !plan.toClose.contains(ShellPanel.settings));
+  }
 
   // No panel ever asks to close itself.
   for (final panel in ShellPanel.values) {
@@ -302,4 +322,57 @@ void testId3Reader() {
   final wide = parseId3(Uint8List.fromList(wideDescription));
   check('a utf-16 description is skipped correctly',
       wide?.cover != null && wide!.cover!.length == png.length);
+}
+
+// ---- virtual desktops ----------------------------------------------------------
+
+void testVirtualDesktopChords() {
+  section('[virtual desktops]');
+
+  const win = VirtualDesktopController.vkLeftWin;
+  const ctrl = VirtualDesktopController.vkControl;
+
+  checkEquals(
+    'create is Win+Ctrl+D',
+    VirtualDesktopController.chordFor(VirtualDesktopAction.create),
+    [win, ctrl, VirtualDesktopController.vkD],
+  );
+  checkEquals(
+    'next is Win+Ctrl+Right',
+    VirtualDesktopController.chordFor(VirtualDesktopAction.next),
+    [win, ctrl, VirtualDesktopController.vkRight],
+  );
+  checkEquals(
+    'previous is Win+Ctrl+Left',
+    VirtualDesktopController.chordFor(VirtualDesktopAction.previous),
+    [win, ctrl, VirtualDesktopController.vkLeft],
+  );
+  checkEquals(
+    'close is Win+Ctrl+F4',
+    VirtualDesktopController.chordFor(VirtualDesktopAction.close),
+    [win, ctrl, VirtualDesktopController.vkF4],
+  );
+  checkEquals(
+    'overview is Win+Tab',
+    VirtualDesktopController.chordFor(VirtualDesktopAction.overview),
+    [win, VirtualDesktopController.vkTab],
+  );
+
+  for (final action in VirtualDesktopAction.values) {
+    check('${action.name}: has a caption', action.label.isNotEmpty);
+    check('${action.name}: presses something',
+        VirtualDesktopController.chordFor(action).isNotEmpty);
+    check('${action.name}: the chord does not end on the Windows key',
+        VirtualDesktopController.chordFor(action).last != win);
+  }
+
+  final desktops = PanelPolicy.plan(ShellPanel.desktops);
+  check('desktops closes the volume flyout',
+      desktops.toClose.contains(ShellPanel.volume));
+  check('desktops closes the brightness flyout',
+      desktops.toClose.contains(ShellPanel.brightness));
+  check('desktops leaves the settings window alone',
+      !desktops.toClose.contains(ShellPanel.settings));
+  check('desktops does not minimise the settings window',
+      !desktops.minimizeSettings);
 }

@@ -24,7 +24,8 @@ enum ShellPanel {
   settings,
   brightness,
   volume,
-  player;
+  player,
+  desktops;
 
   /// Surfaces that land in the middle of the screen.
   bool get isCentred =>
@@ -60,6 +61,7 @@ abstract final class PanelPolicy {
     ShellPanel.brightness,
     ShellPanel.volume,
     ShellPanel.player,
+    ShellPanel.desktops,
   ];
 
   /// The plan for opening [opening].
@@ -71,11 +73,14 @@ abstract final class PanelPolicy {
       if (panel != opening) closing.add(panel);
     }
 
-    // Two centred surfaces never share the screen.
-    if (opening.isCentred) {
-      for (final panel in centred) {
-        if (panel != opening) closing.add(panel);
-      }
+    // A big surface never shares the screen with another big surface, and a
+    // flyout never opens on top of the launcher or the power menu either.
+    // The one exception is the settings window: it is a window, and turning
+    // the volume down should not kick the user out of it.
+    for (final panel in centred) {
+      if (panel == opening) continue;
+      if (panel == ShellPanel.settings && !opening.isCentred) continue;
+      closing.add(panel);
     }
 
     return PanelPlan(

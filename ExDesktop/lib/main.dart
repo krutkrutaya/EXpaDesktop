@@ -13,6 +13,7 @@ import 'system_actions.dart' as sys;
 import 'command_router.dart';
 import 'id3_art.dart';
 import 'shell_layout.dart';
+import 'virtual_desktops.dart';
 import 'radio_control.dart';
 import 'shell_panels.dart';
 import 'sound_control.dart';
@@ -52,12 +53,13 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, this.radio, this.sound});
+  const MyHomePage({super.key, this.radio, this.sound, this.desktops});
 
   /// Test seams: the widget tests pass recorders so no test spawns
   /// PowerShell or moves the machine's volume.
   final RadioSource? radio;
   final SoundSource? sound;
+  final VirtualDesktopSink? desktops;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -87,6 +89,7 @@ class _MyHomePageState extends State<MyHomePage>
   ];
 
   bool _isDotsHovered = false;
+  bool _isDesktopsHovered = false;
   bool _isTopPanelHovered = false;
   bool _isPlaying = false;
 
@@ -129,6 +132,8 @@ class _MyHomePageState extends State<MyHomePage>
   late final CommandRouter _router;
 
   RadioSource get _radioSource => widget.radio ?? RadioControl.instance;
+  VirtualDesktopSink get _desktopSink =>
+      widget.desktops ?? VirtualDesktopController.instance;
   SoundSource get _soundSource => widget.sound ?? SoundControl.instance;
 
   double _brightness = 0.7;
@@ -153,12 +158,14 @@ class _MyHomePageState extends State<MyHomePage>
   MorphPanelController? _playerMorph;
   MorphPanelController? _volumeMorph;
   MorphPanelController? _launcherMorph;
+  MorphPanelController? _desktopsMorph;
 
   bool get _isMenuOpen => _menuMorph?.active ?? false;
   bool get _isBrightnessOpen => _brightnessMorph?.active ?? false;
   bool get _isPlayerOpen => _playerMorph?.active ?? false;
   bool get _isVolumeOpen => _volumeMorph?.active ?? false;
   bool get _isLauncherOpen => _launcherMorph?.active ?? false;
+  bool get _isDesktopsOpen => _desktopsMorph?.active ?? false;
 
   // System volume mirrored from the audio endpoint; the mini panel reads it
   // on open and writes it on drag.
@@ -406,12 +413,18 @@ class _MyHomePageState extends State<MyHomePage>
         menuRect: l.launcherRect,
         menuRadius: 20.0,
       )..attach(this);
+      _desktopsMorph = MorphPanelController(
+        buttonRect: l.desktopsButton,
+        menuRect: l.desktopsRect,
+        menuRadius: 20.0,
+      )..attach(this);
     } else {
       _menuMorph!.retarget(l.menuButton, l.menuRect, 15.0);
       _brightnessMorph!.retarget(l.brightnessButton, l.brightnessRect, 25.0);
       _playerMorph!.retarget(l.playerButton, l.playerRect, 25.0);
       _volumeMorph!.retarget(l.volumeButton, l.volumeRect, 20.0);
       _launcherMorph!.retarget(l.launcherButton, l.launcherRect, 20.0);
+      _desktopsMorph!.retarget(l.desktopsButton, l.desktopsRect, 20.0);
     }
   }
 
@@ -686,6 +699,7 @@ class _MyHomePageState extends State<MyHomePage>
     _playerMorph?.dispose();
     _volumeMorph?.dispose();
     _launcherMorph?.dispose();
+    _desktopsMorph?.dispose();
     _brightnessLib = null;
     super.dispose();
   }
@@ -716,6 +730,8 @@ class _MyHomePageState extends State<MyHomePage>
           if (_isVolumeOpen) _volumeMorph?.close();
         case ShellPanel.player:
           if (_isPlayerOpen) _playerMorph?.close();
+        case ShellPanel.desktops:
+          if (_isDesktopsOpen) _desktopsMorph?.close();
         case ShellPanel.settings:
           break;
       }
@@ -744,7 +760,8 @@ class _MyHomePageState extends State<MyHomePage>
         !_isBrightnessOpen &&
         !_isPlayerOpen &&
         !_isMenuOpen &&
-        !_isLauncherOpen) {
+        !_isLauncherOpen &&
+        !_isDesktopsOpen) {
       return;
     }
     if (_isVolumeOpen) _volumeMorph?.close();
@@ -752,6 +769,7 @@ class _MyHomePageState extends State<MyHomePage>
     if (_isPlayerOpen) _playerMorph?.close();
     if (_isMenuOpen) _menuMorph?.close();
     if (_isLauncherOpen) _launcherMorph?.close();
+    if (_isDesktopsOpen) _desktopsMorph?.close();
     setState(() {});
   }
 
@@ -792,6 +810,22 @@ class _MyHomePageState extends State<MyHomePage>
         _muted = sound.muted;
       });
     }
+    m.toggle();
+    setState(() {});
+  }
+
+  /// Runs a desktop action and closes the panel behind it.
+  void _runDesktopAction(VirtualDesktopAction action) {
+    _desktopSink.perform(action);
+    _desktopsMorph?.close();
+    setState(() {});
+  }
+
+  /// The four dots in the middle of the dock: virtual desktops.
+  void _toggleDesktops() {
+    final m = _desktopsMorph;
+    if (m == null) return;
+    _applyPanelPlan(ShellPanel.desktops);
     m.toggle();
     setState(() {});
   }
@@ -1734,6 +1768,59 @@ class _MyHomePageState extends State<MyHomePage>
             },
           ),
           ListenableBuilder(
+            listenable: _desktopsMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _desktopsMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 320,
+                restHeight: 210,
+                interactive: !morph.animating,
+                child: SizedBox(
+                  width: 320,
+                  height: 210,
+                  child: Padding(
+                    padding: const EdgeInsets.all(11),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      runAlignment: WrapAlignment.center,
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _LauncherTile(
+                          icon: Icons.add_to_photos_outlined,
+                          label: VirtualDesktopAction.create.label,
+                          onTap: () => _runDesktopAction(VirtualDesktopAction.create),
+                        ),
+                        _LauncherTile(
+                          icon: Icons.arrow_forward,
+                          label: VirtualDesktopAction.next.label,
+                          onTap: () => _runDesktopAction(VirtualDesktopAction.next),
+                        ),
+                        _LauncherTile(
+                          icon: Icons.arrow_back,
+                          label: VirtualDesktopAction.previous.label,
+                          onTap: () => _runDesktopAction(VirtualDesktopAction.previous),
+                        ),
+                        _LauncherTile(
+                          icon: Icons.grid_view,
+                          label: VirtualDesktopAction.overview.label,
+                          onTap: () => _runDesktopAction(VirtualDesktopAction.overview),
+                        ),
+                        _LauncherTile(
+                          icon: Icons.delete_outline,
+                          label: VirtualDesktopAction.close.label,
+                          onTap: () => _runDesktopAction(VirtualDesktopAction.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),          ListenableBuilder(
             listenable: _menuMorph ?? const AlwaysStoppedAnimation<int>(0),
             builder: (context, _) {
               final morph = _menuMorph;
@@ -1954,62 +2041,28 @@ class _MyHomePageState extends State<MyHomePage>
                           ),
                         ),
                       const SizedBox(height: 10),
+                      // Four dots in the middle of the dock: virtual desktops.
                       Expanded(
                         child: Center(
                           child: MouseRegion(
-                            onEnter: (event) => setState(() => _isDotsHovered = true),
-                            onExit: (event) => setState(() => _isDotsHovered = false),
+                            onEnter: (event) => setState(() => _isDesktopsHovered = true),
+                            onExit: (event) => setState(() => _isDesktopsHovered = false),
                             child: GestureDetector(
-                              key: const ValueKey('launcher-pill'),
-                              onTap: _toggleLauncher,
+                              key: const ValueKey('desktop-dots'),
+                              onTap: _toggleDesktops,
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
                                 curve: Curves.easeInOut,
                                 width: 52,
-                                height: 100,
+                                height: 52,
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(_isDotsHovered ? 15.0 : 25.0),
+                                  color: Colors.white.withValues(
+                                    alpha: _isDesktopsOpen || _isDesktopsHovered ? 0.16 : 0.08,
+                                  ),
+                                  borderRadius: BorderRadius.circular(15.0),
                                 ),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Container(
-                                      width: 14,
-                                      height: 14,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.white.withValues(alpha: 0.9),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Container(
-                                      width: 11,
-                                      height: 11,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.white.withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Container(
-                                      width: 11,
-                                      height: 11,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.white.withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Container(
-                                      width: 11,
-                                      height: 11,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Colors.white.withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                  ],
+                                child: Center(
+                                  child: DotsGrid(count: 4, active: _isDesktopsOpen),
                                 ),
                               ),
                             ),
@@ -2021,6 +2074,31 @@ class _MyHomePageState extends State<MyHomePage>
                         icon: _isMenuOpen ? Icons.close : Icons.apps,
                         onTap: _toggleMenu,
                         spacing: 1.0,
+                      ),
+                      const SizedBox(height: 6),
+                      // Nine dots at the bottom: the app launcher.
+                      MouseRegion(
+                        onEnter: (event) => setState(() => _isDotsHovered = true),
+                        onExit: (event) => setState(() => _isDotsHovered = false),
+                        child: GestureDetector(
+                          key: const ValueKey('launcher-pill'),
+                          onTap: _toggleLauncher,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeInOut,
+                            width: 52,
+                            height: 52,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(
+                                alpha: _isLauncherOpen || _isDotsHovered ? 0.16 : 0.08,
+                              ),
+                              borderRadius: BorderRadius.circular(_isDotsHovered ? 15.0 : 20.0),
+                            ),
+                            child: Center(
+                              child: DotsGrid(count: 9, active: _isLauncherOpen),
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -2211,6 +2289,51 @@ class _LauncherTileState extends State<_LauncherTile> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A grid of dots: 9 for the launcher, 4 for the virtual desktops.
+class DotsGrid extends StatelessWidget {
+  final int count;
+  final bool active;
+
+  const DotsGrid({super.key, required this.count, this.active = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final columns = count == 9 ? 3 : 2;
+    final dot = count == 9 ? 4.0 : 5.0;
+    final gap = count == 9 ? 4.0 : 5.0;
+    final color = active ? Colors.white : Colors.white.withValues(alpha: 0.75);
+
+    return SizedBox(
+      width: columns * dot + (columns - 1) * gap,
+      height: columns * dot + (columns - 1) * gap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var row = 0; row < columns; row++) ...[
+            if (row > 0) SizedBox(height: gap),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var col = 0; col < columns; col++) ...[
+                  if (col > 0) SizedBox(width: gap),
+                  Container(
+                    width: dot,
+                    height: dot,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: color,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }

@@ -1,15 +1,17 @@
 // Widget tests for the shell itself: the surface coordination that used to
-// break (the launcher staying open behind the settings window) and the
-// "nothing overflows" pass at several window sizes.
+// break (the launcher staying open behind the settings window), the tap-away
+// behaviour, and the virtual-desktop panel.
 //
-// The radios and the sound run on recorders, so a test never spawns
-// PowerShell, never moves the machine's volume and never mutes anything.
+// The radios, the sound and the desktops run on recorders, so a test never
+// spawns PowerShell, never moves the machine's volume and never presses a
+// Windows shortcut.
 //
 // Run with: flutter test
 
 import 'package:exp_desktop/main.dart';
 import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/sound_control.dart';
+import 'package:exp_desktop/virtual_desktops.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -56,7 +58,6 @@ void main() {
     // The dock keeps a way back to the window.
     await tester.tap(find.byKey(const ValueKey('dock-settings')));
     await _settle(tester);
-    // The window comes back on the section it was left on.
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
   });
 
@@ -120,6 +121,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the four dots open the virtual desktops panel', (tester) async {
+    final desktops = _FakeDesktops();
+    await _pumpShell(tester, desktops: desktops);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+
+    for (final action in VirtualDesktopAction.values) {
+      expect(find.text(action.label), findsOneWidget);
+    }
+
+    await tester.tap(find.text(VirtualDesktopAction.create.label));
+    await _settle(tester);
+
+    expect(desktops.performed, [VirtualDesktopAction.create]);
+    // The panel closes behind the action.
+    expect(find.text(VirtualDesktopAction.create.label), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the desktop closes the virtual desktops panel',
+      (tester) async {
+    await _pumpShell(tester, desktops: _FakeDesktops());
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    expect(find.text(VirtualDesktopAction.next.label), findsOneWidget);
+
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    expect(find.text(VirtualDesktopAction.next.label), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the four dots and the nine dots are different surfaces',
+      (tester) async {
+    await _pumpShell(tester, desktops: _FakeDesktops());
+
+    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await _settle(tester);
+    expect(find.text('Калькулятор'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+
+    // Opening the desktops closes the launcher: one surface at a time.
+    expect(find.text('Калькулятор'), findsNothing);
+    expect(find.text(VirtualDesktopAction.overview.label), findsOneWidget);
+  });
+
   testWidgets('the buildings fit a 1366x768 screen', (tester) async {
     await _pumpShell(tester, size: const Size(1366, 768));
     await tester.tap(find.byKey(const ValueKey('launcher-pill')));
@@ -140,13 +192,18 @@ void main() {
 Future<void> _pumpShell(
   WidgetTester tester, {
   Size size = const Size(1600, 900),
+  VirtualDesktopSink? desktops,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(MaterialApp(
-    home: MyHomePage(radio: _FakeRadio(), sound: _FakeSound()),
+    home: MyHomePage(
+      radio: _FakeRadio(),
+      sound: _FakeSound(),
+      desktops: desktops ?? _FakeDesktops(),
+    ),
   ));
   await _settle(tester);
 }
@@ -157,6 +214,13 @@ Future<void> _settle(WidgetTester tester, {int frames = 90}) async {
   for (var i = 0; i < frames; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
+}
+
+class _FakeDesktops implements VirtualDesktopSink {
+  final List<VirtualDesktopAction> performed = [];
+
+  @override
+  void perform(VirtualDesktopAction action) => performed.add(action);
 }
 
 class _FakeSound implements SoundSource {

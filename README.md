@@ -68,7 +68,8 @@ All three sliders use the same wavy WaveSlider as the player.
 
 - A 145 px clock, wallpapers rotating every 12 seconds with a crossfade
 - Top panel with "glass" (BackdropFilter): apps, mini-player, bluetooth / volume / wi-fi
-- Right dock with an indicator and a power menu (sleep / restart / settings)
+- Right dock: the apps button, four dots for virtual desktops and nine dots for the launcher
+- Power menu behind the apps button (lock / sign out / restart / sleep / shutdown / settings)
 - Settings window: 7 sections, draggable by its title bar, minimizes into the dock, opens on a bouncy spring
 
 ## 🎛️ Settings that actually switch things
@@ -118,6 +119,7 @@ ExDesktop/
 │   ├── command_router.dart      # phrases → intents → machine actions
 │   ├── shell_layout.dart        # where every panel sits, as testable numbers
 │   ├── shell_panels.dart        # which surface may share the screen with which
+│   ├── virtual_desktops.dart    # Win+Ctrl chords for the desktop switcher
 │   ├── id3_art.dart             # title / artist / cover from the mp3 tags
 │   ├── track_art.dart           # one artwork rule: cover, asset, placeholder
 │   ├── liquid_glass/            # 🔬 physics & widgets
@@ -139,11 +141,11 @@ ExDesktop/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    ├── shell_check.dart              # 🧪 214 layout/policy/ID3 checks
+    ├── shell_check.dart              # 🧪 310 layout/policy/ID3/desktop checks
     ├── system_mock_check.dart        # 🧪 415 system + assistant mock tests
     └── widget/
         ├── settings_app_test.dart    # 🧪 11 widget tests: panes, switches
-        ├── shell_test.dart           # 🧪 9 widget tests: surfaces, tap-away
+        ├── shell_test.dart           # 🧪 12 widget tests: surfaces, tap-away, desktops
         └── track_art_test.dart       # 🧪 4 widget tests: artwork fallbacks
 ```
 
@@ -216,16 +218,16 @@ The Rust DLL is vendored prebuilt at `lib/rust/brightness.dll`; rebuild it with
 
 Widget tests run under `flutter test`; the system, shell and physics suites are
 plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
-prints a single total — **710 checks**, plus **24 widget tests**.
+prints a single total — **778 checks**, plus **27 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 24 widget tests
+flutter test                                 # 27 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 710 mock checks
+dart run test/mock_all.dart                  # 778 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
 dart run test/system_mock_check.dart         # system + assistant, 415 checks
-dart run test/shell_check.dart               # layout, panel policy, ID3: 214 checks
+dart run test/shell_check.dart               # layout, panels, ID3, desktops: 310 checks
 ```
 
 ```
