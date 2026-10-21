@@ -37,7 +37,7 @@ with all the physics:
 | ⚡ Reversal | Close right in the middle of an opening — the velocity carries over and the drop turns around without a blink |
 
 The physics is damped springs (semi-implicit Euler, sub-stepped),
-verified by mock tests: **32/32 PASS**, including 200 randomized fuzz
+verified by mock tests: **53/53 PASS**, including 200 randomized fuzz
 runs and 300 ms stress frames.
 
 ## 🎵 Music Player
@@ -67,6 +67,36 @@ All three sliders use the same wavy WaveSlider as the player.
 - Right dock with an indicator and a power menu (sleep / restart / settings)
 - Settings window: 7 sections, draggable by its title bar, minimizes into the dock, opens on a bouncy spring
 
+## 🎛️ Settings that actually switch things
+
+The parameters the shell can drive itself live **in the shell**, not behind a
+link to Windows:
+
+| Parameter | Read from | Switched by |
+|-----------|-----------|-------------|
+| Volume / mute | `IAudioEndpointVolume` (COM) | the same endpoint, no windows opened |
+| Wi-Fi | `Windows.Devices.Radios` + `Get-NetAdapter` | `Radio.SetStateAsync` — the API behind the taskbar's quick settings, no UAC |
+| Bluetooth | `Windows.Devices.Radios` | `Radio.SetStateAsync` |
+| Brightness | the Rust DDC/CI DLL | the same DLL |
+
+`ms-settings:` is the fallback: the rows the shell does not own ("Default
+apps", "Windows Update", …) still open the matching Windows page, but every
+row the shell owns shows its real state and a switch that works.
+
+Opening a radio goes through a hidden PowerShell bridge (`CreateProcessW`
+with `CREATE_NO_WINDOW`, so no console flashes) and a worker isolate, so the
+UI never waits on a process. Windows' own radio API answers something real —
+the shell shows what the machine reports, including "device not found" and
+"blocked by the system".
+
+### Command line
+
+`Ctrl+Alt+Space` opens a one-line command field. Type «включи вайфай»,
+«громкость 40», «заглуши звук», «открой настройки блютуза» — the phrase goes
+through the same sink as the buttons and the reply appears under the field.
+The phrase matcher and the assistant's system prompt live in
+[`PROMPTS.md`](PROMPTS.md).
+
 ## 🧩 Structure
 
 ```
@@ -74,7 +104,14 @@ ExDesktop/
 ├── lib/
 │   ├── main.dart                # shell: wallpapers, clock, panels, dock
 │   ├── player.dart              # player: transport, slider, track list
-│   ├── settings-app.dart        # spring-driven settings window
+│   ├── settings_app.dart        # spring-driven settings + live parameter panes
+│   ├── sound_control.dart       # one owner of the master volume and mute
+│   ├── radio_control.dart       # Wi-Fi / Bluetooth state and switching
+│   ├── radio_script.dart        # the PowerShell bridge to Windows' radio API
+│   ├── hidden_process.dart      # console tools with no console window
+│   ├── native_heap.dart         # malloc/free for the FFI modules
+│   ├── assistant_prompt.dart    # the assistant's system prompt + catalog
+│   ├── command_router.dart      # phrases → intents → machine actions
 │   ├── liquid_glass/            # 🔬 physics & widgets
 │   │   ├── menu_morph.dart      #   capsule→drop→panel morph
 │   │   ├── menu_spring.dart     #   bouncy scale (settings)
@@ -91,7 +128,8 @@ ExDesktop/
 │   ├── music/                   # tracks and cover art
 │   └── icons/
 └── test/
-    └── liquid_glass_mock_check.dart  # 🧪 32 physics mock tests
+    ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
+    └── system_mock_check.dart        # 🧪 138 system + assistant mock tests
 ```
 
 ## 🚀 Building
@@ -112,21 +150,26 @@ cargo build --release
 cp target/release/brightness.dll .
 ```
 
-## 🧪 Physics Tests
+## 🧪 Tests
+
+Both suites are pure Dart — no Flutter SDK needed.
 
 ```bash
 cd ExDesktop
-dart run test/liquid_glass_mock_check.dart
+dart run test/liquid_glass_mock_check.dart   # physics
+dart run test/system_mock_check.dart         # system layer + assistant
 ```
 
 ```
-[spring]        ✓ settles, survives frame stalls
-[menu spring]   ✓ bounces past 1.0, exponential close
-[open morph]    ✓ lands exactly on the panel rect, < 3s
-[close morph]   ✓ fades back into the button, < 5s
-[reversal]      ✓ mid-flight reverse with velocity carry-over
-[fuzz]          ✓ 200 random button/panel pairs, 0 NaNs
-passed: 32   failed: 0 — ALL GREEN
+[liquid glass]  ✓ springs, morphs, reversal, 200 fuzz runs
+passed: 53   failed: 0 — ALL GREEN
+
+[hidden process]  ✓ silent console runner: stdout, stderr, exit codes
+[radio parsing]   ✓ On/Off/blocked/unavailable, adapter state
+[command parser]  ✓ 40+ Russian phrasings, incl. the "выключи звук" trap
+[router]          ✓ the sink receives exactly the parsed action
+[prompt]          ✓ every catalog intent is named in the prompt
+passed: 138  failed: 0 — ALL GREEN
 ```
 
 ## 📄 License

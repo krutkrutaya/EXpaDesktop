@@ -9,7 +9,10 @@ import 'dart:ui';
 import 'player.dart';
 import 'settings_app.dart';
 import 'system_actions.dart';
-import 'volume_control.dart';
+import 'system_actions.dart' as sys;
+import 'command_router.dart';
+import 'radio_control.dart';
+import 'sound_control.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'liquid_glass/morph_controller.dart';
 import 'liquid_glass/morph_glass.dart';
@@ -51,7 +54,9 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
+class _MyHomePageState extends State<MyHomePage>
+    with TickerProviderStateMixin
+    implements SystemCommandSink {
   late String _timeString;
   late Timer _timer;
   late Timer _backgroundTimer;
@@ -83,6 +88,29 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool _isSettingsOpen = false;
   bool _isSettingsMinimized = false;
   Offset _settingsPosition = Offset.zero;
+
+  // Which section the settings window shows: 'wifi', 'bluetooth', 'sound'.
+  String? _settingsSection;
+
+  // The radios' real state, mirrored from the system for the top bar.
+  RadioStatus _wifiStatus = const RadioStatus(
+    kind: RadioKind.wifi,
+    state: RadioState.unknown,
+  );
+  RadioStatus _bluetoothStatus = const RadioStatus(
+    kind: RadioKind.bluetooth,
+    state: RadioState.unknown,
+  );
+  Timer? _radioTimer;
+
+  // The command line: Ctrl+Alt+Space opens it, Enter runs the phrase.
+  final TextEditingController _commandController = TextEditingController();
+  final FocusNode _commandFocus = FocusNode();
+  bool _commandBarOpen = false;
+  String _commandReply = '';
+  Timer? _replyTimer;
+  late final CommandRouter _router;
+  KeyEventHandler? _keyboardHandler;
   double _brightness = 0.7;
   double _contrast = 0.7;
   double _warmth = 0.5;
@@ -182,6 +210,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _timeString = _formatTime(DateTime.now());
     _loadBrightnessLib();
     _initAudioPlayer();
+    _router = CommandRouter(sink: this);
+    _installHotkeys();
+    unawaited(_refreshRadios());
+    _radioTimer = Timer.periodic(const Duration(seconds: 45), (timer) {
+      unawaited(_refreshRadios());
+    });
 
     _rotationController = AnimationController(
       duration: const Duration(seconds: 4),
@@ -571,6 +605,14 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _brightnessFx?.cancel();
     _contrastFx?.cancel();
     _warmthFx?.cancel();
+    _radioTimer?.cancel();
+    _replyTimer?.cancel();
+    _commandController.dispose();
+    _commandFocus.dispose();
+    if (_keyboardHandler != null) {
+      HardwareKeyboard.instance.removeHandler(_keyboardHandler!);
+      _keyboardHandler = null;
+    }
     _audioPlayer.dispose();
     _rotationController.dispose();
     _menuMorph?.dispose();
@@ -621,6 +663,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     setState(() {});
   }
 
+  /// The sound flyout. It only ever opens the panel: the sound itself is
+  /// changed by the panel, and nothing on this path can hide the desktop.
   void _toggleVolume() {
     final m = _volumeMorph;
     if (m == null) return;
@@ -629,8 +673,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     if (_isPlayerOpen) _playerMorph?.close();
     if (!m.active) {
       // Read the real device state so the panel opens honest.
-      _volume = VolumeControl.instance.volume;
-      _muted = VolumeControl.instance.muted;
+      final sound = SoundControl.instance;
+      sound.refresh();
+      setState(() {
+        _volume = sound.volume;
+        _muted = sound.muted;
+      });
     }
     m.toggle();
     setState(() {});
@@ -754,12 +802,268 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     );
   }
 
-  void _toggleSettings() {
+  /// Opens the shell's own settings, optionally at a given section.
+  void _openSettingsAt(String? section) {
     setState(() {
-      _isSettingsOpen = !_isSettingsOpen;
+      _settingsSection = section;
+      _isSettingsOpen = true;
       _isSettingsMinimized = false;
     });
+    if (section == 'wifi' || section == 'bluetooth') {
+      unawaited(_refreshRadios());
+    }
   }
+
+  void _toggleSettings() {
+    if (_isSettingsOpen && !_isSettingsMinimized) {
+      setState(() {
+        _isSettingsOpen = false;
+        _isSettingsMinimized = false;
+      });
+      return;
+    }
+    _openSettingsAt(null);
+  }
+
+  /// Reads both radios from the system, so the top bar shows the truth.
+  Future<void> _refreshRadios() async {
+    final wifi = await RadioControl.instance.status(RadioKind.wifi);
+    final bluetooth = await RadioControl.instance.status(RadioKind.bluetooth);
+    if (!mounted) return;
+    setState(() {
+      _wifiStatus = wifi;
+      _bluetoothStatus = bluetooth;
+    });
+  }
+
+  // ---- the command line ------------------------------------------------------
+
+  /// Ctrl+Alt+Space opens the command line. The handler sits on the keyboard
+  /// itself, so it works no matter which widget has the focus.
+  void _installHotkeys() {
+    _keyboardHandler = (KeyEvent event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      final keyboard = HardwareKeyboard.instance;
+      if (event.logicalKey == LogicalKeyboardKey.escape && _commandBarOpen) {
+        _toggleCommandBar();
+        return KeyEventResult.handled;
+      }
+      final isTrigger = event.logicalKey == LogicalKeyboardKey.space &&
+          keyboard.isControlPressed &&
+          keyboard.isAltPressed;
+      if (!isTrigger) return KeyEventResult.ignored;
+      _toggleCommandBar();
+      return KeyEventResult.handled;
+    };
+    HardwareKeyboard.instance.addHandler(_keyboardHandler!);
+  }
+
+  void _toggleCommandBar() {
+    setState(() {
+      _commandBarOpen = !_commandBarOpen;
+      _commandReply = '';
+    });
+    if (_commandBarOpen) {
+      _commandFocus.requestFocus();
+    } else {
+      _commandController.clear();
+    }
+  }
+
+  Future<void> _submitCommand() async {
+    final text = _commandController.text.trim();
+    if (text.isEmpty) return;
+    final reply = await _router.run(text);
+    if (!mounted) return;
+    setState(() {
+      _commandReply = reply;
+      _commandController.clear();
+    });
+    _replyTimer?.cancel();
+    _replyTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _commandReply = '');
+    });
+  }
+
+  Widget _buildCommandBar() {
+    final width = MediaQuery.of(context).size.width;
+    return Positioned(
+      top: 64,
+      left: width / 2 - 250,
+      child: Container(
+        width: 500,
+        padding: const EdgeInsets.fromLTRB(16, 10, 10, 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.terminal, color: Colors.white54, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _commandController,
+                    focusNode: _commandFocus,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    cursorColor: Colors.white,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                      hintText:
+                          'включи вайфай • громкость 40 • открой настройки звука',
+                      hintStyle:
+                          TextStyle(color: Colors.white38, fontSize: 14),
+                    ),
+                    onSubmitted: (value) => _submitCommand(),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _toggleCommandBar,
+                  icon: const Icon(Icons.close, color: Colors.white54, size: 16),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 24, minHeight: 24),
+                ),
+              ],
+            ),
+            if (_commandReply.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                _commandReply,
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- SystemCommandSink -----------------------------------------------------
+
+  @override
+  Future<double> setVolume(double value) async {
+    final sound = SoundControl.instance;
+    sound.volume = value;
+    if (mounted) {
+      setState(() {
+        _volume = sound.volume;
+        _muted = sound.muted;
+      });
+    }
+    return sound.volume;
+  }
+
+  @override
+  Future<double> stepVolume(double direction) async {
+    final sound = SoundControl.instance;
+    sound.stepVolume(direction);
+    if (mounted) {
+      setState(() {
+        _volume = sound.volume;
+        _muted = sound.muted;
+      });
+    }
+    return sound.volume;
+  }
+
+  @override
+  Future<bool> setMuted(bool muted) async {
+    final sound = SoundControl.instance;
+    sound.muted = muted;
+    if (mounted) {
+      setState(() {
+        _muted = sound.muted;
+        _volume = sound.volume;
+      });
+    }
+    return sound.muted;
+  }
+
+  @override
+  Future<RadioStatus> setRadioPower(RadioKind kind, bool on) async {
+    final result = await RadioControl.instance.setPower(kind, on);
+    if (mounted) {
+      setState(() {
+        if (kind == RadioKind.wifi) {
+          _wifiStatus = result.status;
+        } else {
+          _bluetoothStatus = result.status;
+        }
+      });
+    }
+    return result.status;
+  }
+
+  @override
+  Future<void> openBuiltInSection(String sectionId) async {
+    _openSettingsAt(sectionId);
+  }
+
+  @override
+  Future<void> openWindowsPage(String uri) async {
+    await openSettingsPage(uri);
+  }
+
+  @override
+  Future<void> setBrightness(double value) async {
+    final level = value.clamp(0.0, 1.0);
+    setState(() {
+      _brightness = level;
+    });
+    _setSystemBrightness(level);
+  }
+
+  @override
+  Future<void> adjustBrightness(double direction) async {
+    final level = (_brightness + 0.05 * direction).clamp(0.0, 1.0);
+    setState(() {
+      _brightness = level;
+    });
+    _setSystemBrightness(level);
+  }
+
+  @override
+  Future<void> mediaPlayPause() async {
+    _toggleTrackPlay();
+  }
+
+  @override
+  Future<void> mediaNext() async {
+    _nextTrack();
+  }
+
+  @override
+  Future<void> mediaPrevious() async {
+    _prevTrack();
+  }
+
+  @override
+  Future<void> lockScreen() async {
+    lockWorkstation();
+  }
+
+  @override
+  Future<void> sleepMachine() => sys.sleepMachine();
+
+  @override
+  Future<void> signOut() => sys.signOut();
+
+  @override
+  Future<void> restartMachine() => sys.restartMachine();
+
+  @override
+  Future<void> shutdownMachine() => sys.shutdownMachine();
 
   @override
   Widget build(BuildContext context) {
@@ -1015,7 +1319,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                               onEnter: (event) => setState(() => _isBluetoothHovered = true),
                               onExit: (event) => setState(() => _isBluetoothHovered = false),
                               child: GestureDetector(
-                                onTap: () => openSettingsPage('ms-settings:bluetooth'),
+                                // The radio lives in the shell's own settings
+                                // now: the button takes the user there, and
+                                // the switch there really flips the radio.
+                                onTap: () => _openSettingsAt('bluetooth'),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 150),
                                   width: 40,
@@ -1024,7 +1331,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                     color: _isBluetoothHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
                                     borderRadius: BorderRadius.circular(10.0),
                                   ),
-                                  child: const Icon(Icons.bluetooth, color: Colors.white, size: 20),
+                                  child: Icon(
+                                    Icons.bluetooth,
+                                    color: _bluetoothStatus.isOn
+                                        ? Colors.white
+                                        : Colors.white38,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1033,6 +1346,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                               onEnter: (event) => setState(() => _isVolumeHovered = true),
                               onExit: (event) => setState(() => _isVolumeHovered = false),
                               child: GestureDetector(
+                                // Sound only: the panel opens, the desktop
+                                // stays exactly where it is.
                                 onTap: _toggleVolume,
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 150),
@@ -1055,7 +1370,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                               onEnter: (event) => setState(() => _isWifiHovered = true),
                               onExit: (event) => setState(() => _isWifiHovered = false),
                               child: GestureDetector(
-                                onTap: () => openSettingsPage('ms-settings:network-wifi'),
+                                onTap: () => _openSettingsAt('wifi'),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 150),
                                   width: 40,
@@ -1064,7 +1379,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                                     color: _isWifiHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
                                     borderRadius: BorderRadius.circular(10.0),
                                   ),
-                                  child: const Icon(Icons.wifi, color: Colors.white, size: 20),
+                                  child: Icon(
+                                    Icons.wifi,
+                                    color: _wifiStatus.isOn
+                                        ? Colors.white
+                                        : Colors.white38,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1242,9 +1563,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                     children: [
                       IconButton(
                         onPressed: () {
+                          final sound = SoundControl.instance;
                           setState(() {
-                            _muted = !_muted;
-                            VolumeControl.instance.muted = _muted;
+                            sound.muted = !sound.muted;
+                            _muted = sound.muted;
+                            _volume = sound.volume;
                           });
                         },
                         icon: Icon(
@@ -1260,11 +1583,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         child: WaveSlider(
                           value: _muted ? 0.0 : _volume,
                           onChanged: (value) {
+                            final sound = SoundControl.instance;
                             setState(() {
-                              _volume = value;
-                              if (value > 0 && _muted) _muted = false;
-                              VolumeControl.instance.muted = _muted;
-                              VolumeControl.instance.volume = value;
+                              sound.volume = value;
+                              _volume = sound.volume;
+                              _muted = sound.muted;
                             });
                           },
                         ),
@@ -1390,6 +1713,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               left: MediaQuery.of(context).size.width / 2 - 425,
               child: SettingsApp(
                 initialPosition: _settingsPosition,
+                initialSection: _settingsSection,
                 onPositionChanged: (pos) {
                   _settingsPosition = pos;
                 },
@@ -1397,7 +1721,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   setState(() {
                     _isSettingsOpen = false;
                     _isSettingsMinimized = false;
+                    _settingsSection = null;
                   });
+                  unawaited(_refreshRadios());
                 },
                 onMinimize: () {
                   setState(() {
@@ -1407,6 +1733,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 },
               ),
             ),
+          if (_commandBarOpen) _buildCommandBar(),
           ListenableBuilder(
             listenable: _playerMorph ?? const AlwaysStoppedAnimation<int>(0),
             builder: (context, _) {
