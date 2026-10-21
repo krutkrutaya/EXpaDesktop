@@ -1,0 +1,17 @@
+# Reference library, not part of the app
+liquid-glass-main/
+
+# Dart/Flutter
+.dart_tool/
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini

@@ -1,6 +1,9 @@
 // settings-app.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'dart:ui';
+
+import 'liquid_glass/menu_spring.dart';
 
 class SettingsApp extends StatefulWidget {
   final VoidCallback onClose;
@@ -21,68 +24,72 @@ class SettingsApp extends StatefulWidget {
 }
 
 class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scaleAnimation;
-  late final Animation<double> _opacityAnimation;
-  late final Animation<double> _slideAnimation;
+  // Liquid-glass spring: opens with a bounce past 1.0 and settles, closes
+  // with a smooth exponential shrink, opacity fading out ahead of it.
+  late final Ticker _ticker;
+  final MenuSpringState _spring = MenuSpringState(0);
+  double _lastElapsedS = 0;
+  double _scale = 0.001;
+  double _opacity = 0;
   int _hoveredIndex = -1;
   int _selectedIndex = -1;
   late Offset _position;
+  int _pendingAction = 0; // 0 none, 1 close, 2 minimize
 
   final List<Map<String, dynamic>> _sections = [
     {
-      'title': 'Ввод и вывод',
+      'title': 'Input & output',
       'items': [
-        {'icon': Icons.mouse, 'label': 'Мышь и сенсорная панель'},
-        {'icon': Icons.keyboard, 'label': 'Клавиатура'},
-        {'icon': Icons.speaker, 'label': 'Настройка звука'},
-        {'icon': Icons.monitor, 'label': 'Экран и монитор'},
-        {'icon': Icons.accessibility, 'label': 'Специальные возможности'},
+        {'icon': Icons.mouse, 'label': 'Mouse & touchpad'},
+        {'icon': Icons.keyboard, 'label': 'Keyboard'},
+        {'icon': Icons.speaker, 'label': 'Sound settings'},
+        {'icon': Icons.monitor, 'label': 'Display & monitor'},
+        {'icon': Icons.accessibility, 'label': 'Accessibility'},
       ],
     },
     {
-      'title': 'Подключенные устройства',
+      'title': 'Connected devices',
       'items': [
         {'icon': Icons.bluetooth, 'label': 'Bluetooth'},
-        {'icon': Icons.camera, 'label': 'Диски и фотокамеры'},
+        {'icon': Icons.camera, 'label': 'Drives & cameras'},
       ],
     },
     {
-      'title': 'Сеть и связь',
+      'title': 'Network & connectivity',
       'items': [
-        {'icon': Icons.wifi, 'label': 'Wi-Fi и интернет'},
+        {'icon': Icons.wifi, 'label': 'Wi-Fi & internet'},
       ],
     },
     {
-      'title': 'Внешний вид',
+      'title': 'Appearance',
       'items': [
-        {'icon': Icons.wallpaper, 'label': 'Обои'},
-        {'icon': Icons.palette, 'label': 'Цвета и оформления'},
-        {'icon': Icons.text_fields, 'label': 'Текст и шрифты'},
-        {'icon': Icons.animation, 'label': 'Анимации'},
+        {'icon': Icons.wallpaper, 'label': 'Wallpaper'},
+        {'icon': Icons.palette, 'label': 'Colors & themes'},
+        {'icon': Icons.text_fields, 'label': 'Text & fonts'},
+        {'icon': Icons.animation, 'label': 'Animations'},
       ],
     },
     {
-      'title': 'Приложения и окна',
+      'title': 'Apps & windows',
       'items': [
-        {'icon': Icons.apps, 'label': 'Приложения по умолчанию'},
-        {'icon': Icons.notifications, 'label': 'Уведомления'},
-        {'icon': Icons.window, 'label': 'Диспетчер окон'},
+        {'icon': Icons.apps, 'label': 'Default apps'},
+        {'icon': Icons.notifications, 'label': 'Notifications'},
+        {'icon': Icons.window, 'label': 'Window manager'},
       ],
     },
     {
-      'title': 'Безопасность и конфиденциальность',
+      'title': 'Security & privacy',
       'items': [
-        {'icon': Icons.login, 'label': 'Экран входа в систему'},
-        {'icon': Icons.lock, 'label': 'Блокировка экрана'},
-        {'icon': Icons.feedback, 'label': 'Обратная связь'},
+        {'icon': Icons.login, 'label': 'Login screen'},
+        {'icon': Icons.lock, 'label': 'Lock screen'},
+        {'icon': Icons.feedback, 'label': 'Feedback'},
       ],
     },
     {
-      'title': 'Язык и время',
+      'title': 'Language & time',
       'items': [
-        {'icon': Icons.calendar_today, 'label': 'Дата и время'},
-        {'icon': Icons.language, 'label': 'Язык и регион'},
+        {'icon': Icons.calendar_today, 'label': 'Date & time'},
+        {'icon': Icons.language, 'label': 'Language & region'},
       ],
     },
   ];
@@ -91,60 +98,65 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _position = widget.initialPosition;
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 400),
-      reverseDuration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 0.7, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutBack,
-        reverseCurve: Curves.easeInBack,
-      ),
-    );
-    _opacityAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
-      reverseCurve: const Interval(0.2, 1.0, curve: Curves.easeIn),
-    );
-    _slideAnimation = Tween<double>(begin: 600.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutQuart,
-        reverseCurve: Curves.easeInQuart,
-      ),
-    );
-    _controller.forward();
+    _ticker = createTicker(_onTick);
+    _spring.target = 1;
+    _ticker.start();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ticker.dispose();
     super.dispose();
   }
 
+  void _onTick(Duration elapsed) {
+    final seconds = elapsed.inMicroseconds / 1e6;
+    final dt = seconds - _lastElapsedS;
+    _lastElapsedS = seconds;
+    if (dt <= 0) return;
+    final frame = stepMenuSpring(_spring, dt * 1000);
+    _scale = frame.scale;
+    _opacity = frame.opacity;
+    setState(() {});
+    if (frame.stopped) {
+      _ticker.stop();
+      _lastElapsedS = 0;
+      if (_pendingAction == 1) {
+        widget.onClose();
+      } else if (_pendingAction == 2) {
+        widget.onMinimize();
+      }
+      _pendingAction = 0;
+    }
+  }
+
   void _closeWithAnimation() {
-    _controller.reverse().then((_) {
-      widget.onClose();
-    });
+    _pendingAction = 1;
+    _spring.target = 0;
+    _resume();
   }
 
   void _minimizeWithAnimation() {
-    _controller.reverse().then((_) {
-      widget.onMinimize();
-    });
+    _pendingAction = 2;
+    _spring.target = 0;
+    _resume();
+  }
+
+  void _resume() {
+    if (_ticker.isActive) return; // already ticking, will pick the new target up
+    _lastElapsedS = 0;
+    _ticker.start();
   }
 
   @override
   Widget build(BuildContext context) {
     int itemIndex = 0;
     return Transform.translate(
-      offset: _position + Offset(0, _slideAnimation.value),
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: FadeTransition(
-          opacity: _opacityAnimation,
+      offset: _position,
+      child: Transform.scale(
+        scale: _scale,
+        child: Opacity(
+          opacity: _opacity / 255,
           child: SizedBox(
             width: 850,
             height: 520,
@@ -282,7 +294,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                                   ),
                                   const SizedBox(width: 8),
                                   const Text(
-                                    'Настройки',
+                                    'Settings',
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 14,
@@ -310,7 +322,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                           const Expanded(
                             child: Center(
                               child: Text(
-                                'Выберите параметр',
+                                'Select an item',
                                 style: TextStyle(color: Colors.white54, fontSize: 15),
                               ),
                             ),
