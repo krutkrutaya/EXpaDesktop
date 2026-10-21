@@ -38,58 +38,58 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
 
   final List<Map<String, dynamic>> _sections = [
     {
-      'title': 'Ввод и вывод',
+      'title': 'Input & output',
       'items': [
-        {'icon': Icons.mouse, 'label': 'Мышь и сенсорная панель'},
-        {'icon': Icons.keyboard, 'label': 'Клавиатура'},
-        {'icon': Icons.speaker, 'label': 'Настройка звука'},
-        {'icon': Icons.monitor, 'label': 'Экран и монитор'},
-        {'icon': Icons.accessibility, 'label': 'Специальные возможности'},
+        {'icon': Icons.mouse, 'label': 'Mouse & touchpad'},
+        {'icon': Icons.keyboard, 'label': 'Keyboard'},
+        {'icon': Icons.speaker, 'label': 'Sound settings'},
+        {'icon': Icons.monitor, 'label': 'Display & monitor'},
+        {'icon': Icons.accessibility, 'label': 'Accessibility'},
       ],
     },
     {
-      'title': 'Подключенные устройства',
+      'title': 'Connected devices',
       'items': [
         {'icon': Icons.bluetooth, 'label': 'Bluetooth'},
-        {'icon': Icons.camera, 'label': 'Диски и фотокамеры'},
+        {'icon': Icons.camera, 'label': 'Drives & cameras'},
       ],
     },
     {
-      'title': 'Сеть и связь',
+      'title': 'Network & connectivity',
       'items': [
-        {'icon': Icons.wifi, 'label': 'Wi-Fi и интернет'},
+        {'icon': Icons.wifi, 'label': 'Wi-Fi & internet'},
       ],
     },
     {
-      'title': 'Внешний вид',
+      'title': 'Appearance',
       'items': [
-        {'icon': Icons.wallpaper, 'label': 'Обои'},
-        {'icon': Icons.palette, 'label': 'Цвета и оформления'},
-        {'icon': Icons.text_fields, 'label': 'Текст и шрифты'},
-        {'icon': Icons.animation, 'label': 'Анимации'},
+        {'icon': Icons.wallpaper, 'label': 'Wallpaper'},
+        {'icon': Icons.palette, 'label': 'Colors & themes'},
+        {'icon': Icons.text_fields, 'label': 'Text & fonts'},
+        {'icon': Icons.animation, 'label': 'Animations'},
       ],
     },
     {
-      'title': 'Приложения и окна',
+      'title': 'Apps & windows',
       'items': [
-        {'icon': Icons.apps, 'label': 'Приложения по умолчанию'},
-        {'icon': Icons.notifications, 'label': 'Уведомления'},
-        {'icon': Icons.window, 'label': 'Диспетчер окон'},
+        {'icon': Icons.apps, 'label': 'Default apps'},
+        {'icon': Icons.notifications, 'label': 'Notifications'},
+        {'icon': Icons.window, 'label': 'Window manager'},
       ],
     },
     {
-      'title': 'Безопасность и конфиденциальность',
+      'title': 'Security & privacy',
       'items': [
-        {'icon': Icons.login, 'label': 'Экран входа в систему'},
-        {'icon': Icons.lock, 'label': 'Блокировка экрана'},
-        {'icon': Icons.feedback, 'label': 'Обратная связь'},
+        {'icon': Icons.login, 'label': 'Login screen'},
+        {'icon': Icons.lock, 'label': 'Lock screen'},
+        {'icon': Icons.feedback, 'label': 'Feedback'},
       ],
     },
     {
-      'title': 'Язык и время',
+      'title': 'Language & time',
       'items': [
-        {'icon': Icons.calendar_today, 'label': 'Дата и время'},
-        {'icon': Icons.language, 'label': 'Язык и регион'},
+        {'icon': Icons.calendar_today, 'label': 'Date & time'},
+        {'icon': Icons.language, 'label': 'Language & region'},
       ],
     },
   ];
@@ -294,7 +294,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                                   ),
                                   const SizedBox(width: 8),
                                   const Text(
-                                    'Настройки',
+                                    'Settings',
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 14,
@@ -322,7 +322,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                           const Expanded(
                             child: Center(
                               child: Text(
-                                'Выберите параметр',
+                                'Select an item',
                                 style: TextStyle(color: Colors.white54, fontSize: 15),
                               ),
                             ),

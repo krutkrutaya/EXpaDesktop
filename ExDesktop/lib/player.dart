@@ -107,8 +107,8 @@ class _PlayerPanelState extends State<PlayerPanel> {
         topLeft.dy,
       ),
       items: [
-        _checkItem('repeat', 'Повтор плейлиста', widget.isRepeatPlaylist),
-        _checkItem('shuffle', 'Случайный порядок', widget.isShuffle),
+        _checkItem('repeat', 'Repeat playlist', widget.isRepeatPlaylist),
+        _checkItem('shuffle', 'Shuffle order', widget.isShuffle),
       ],
     ).then((v) {
       if (!mounted) return;
@@ -270,9 +270,9 @@ class _PlayerPanelState extends State<PlayerPanel> {
                 const SizedBox(height: 12),
                 _buildSeekRow(),
                 const SizedBox(height: 8),
-                const _GlassPillButton(label: 'Треки'),
+                const _GlassPillButton(label: 'Tracks'),
                 const SizedBox(height: 4),
-                const _GlassPillButton(label: 'Настройки'),
+                const _GlassPillButton(label: 'Settings'),
               ],
             ),
           ),
@@ -502,7 +502,7 @@ class _PlayerPanelState extends State<PlayerPanel> {
   }
 }
 
-/// The «Треки» / «Настройки» pills: on hover the color deepens and the
+/// The «Tracks» / «Settings» pills: on hover the color deepens and the
 /// rounding morphs from 25 to 15.
 class _GlassPillButton extends StatefulWidget {
   final String label;
