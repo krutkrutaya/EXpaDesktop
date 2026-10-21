@@ -1,10 +1,13 @@
 // The voice/text path: a command becomes an intent, an intent becomes an
-// action, an action becomes a short Russian sentence.
+// action, an action becomes a short sentence.
 //
 // The router is the only place that knows how a phrase maps to a machine
-// operation, and the buttons call the very same sink, so "прибавь громкость"
-// and the slider in the settings window can never disagree. Nothing in here
-// can close the desktop: the sink has no way to touch the window.
+// operation, and the buttons call the very same sink, so "turn the volume
+// down" and the slider in the settings window can never disagree. Nothing in
+// here can close the desktop: the sink has no way to touch the window.
+//
+// Both English and Russian phrasings are understood; the replies follow the
+// UI language, which is English.
 
 import 'assistant_prompt.dart';
 import 'radio_control.dart';
@@ -70,7 +73,7 @@ class CommandRouter {
   /// Understands [utterance] and performs it. Returns the reply sentence.
   Future<String> run(String utterance) async {
     final command = parseCommand(utterance);
-    if (command == null) return 'не понял команду';
+    if (command == null) return "didn't catch that";
     return perform(command);
   }
 
@@ -79,57 +82,57 @@ class CommandRouter {
     switch (command.intent) {
       case AssistantIntent.setVolume:
         final value = await sink.setVolume(command.params['value']! as double);
-        return 'громкость ${(value * 100).round()}';
+        return 'volume ${(value * 100).round()}';
       case AssistantIntent.adjustVolume:
         final value =
             await sink.stepVolume(command.params['direction']! as double);
-        return 'громкость ${(value * 100).round()}';
+        return 'volume ${(value * 100).round()}';
       case AssistantIntent.setMute:
         final muted = await sink.setMuted(command.params['muted']! as bool);
-        return muted ? 'звук заглушён' : 'звук включён';
+        return muted ? 'sound muted' : 'sound on';
       case AssistantIntent.toggleWifi:
         return _toggleRadio(RadioKind.wifi, command.params['on'] as bool?);
       case AssistantIntent.toggleBluetooth:
         return _toggleRadio(RadioKind.bluetooth, command.params['on'] as bool?);
       case AssistantIntent.openBuiltInSection:
         await sink.openBuiltInSection(command.params['section']! as String);
-        return 'открыл настройки';
+        return 'opened settings';
       case AssistantIntent.openWindowsSettings:
         await sink.openWindowsPage(command.params['uri']! as String);
-        return 'открыл параметры windows';
+        return 'opened windows settings';
       case AssistantIntent.setBrightness:
         final value = command.params['value']! as double;
         await sink.setBrightness(value);
-        return 'яркость ${(value * 100).round()}';
+        return 'brightness ${(value * 100).round()}';
       case AssistantIntent.adjustBrightness:
         await sink.adjustBrightness(command.params['direction']! as double);
-        return 'яркость изменена';
+        return 'brightness changed';
       case AssistantIntent.mediaPlayPause:
         await sink.mediaPlayPause();
-        return 'пауза';
+        return 'paused';
       case AssistantIntent.mediaNext:
         await sink.mediaNext();
-        return 'следующий трек';
+        return 'next track';
       case AssistantIntent.mediaPrevious:
         await sink.mediaPrevious();
-        return 'предыдущий трек';
+        return 'previous track';
       case AssistantIntent.lock:
         await sink.lockScreen();
-        return 'экран заблокирован';
+        return 'screen locked';
       case AssistantIntent.sleep:
         await sink.sleepMachine();
-        return 'спящий режим';
+        return 'sleeping';
       case AssistantIntent.signOut:
         await sink.signOut();
-        return 'выход из системы';
+        return 'signing out';
       case AssistantIntent.restart:
         await sink.restartMachine();
-        return 'перезагрузка';
+        return 'restarting';
       case AssistantIntent.shutdown:
         await sink.shutdownMachine();
-        return 'выключение';
+        return 'shutting down';
       case AssistantIntent.unknown:
-        return 'не понял команду';
+        return "didn't catch that";
     }
   }
 
@@ -142,12 +145,12 @@ class CommandRouter {
 
 // ---- the phrase matcher ------------------------------------------------------
 
-/// Reads a Russian (or English) command and returns what it means.
+/// Reads an English or Russian command and returns what it means.
 ParsedCommand? parseCommand(String utterance) {
   final words = _words(utterance);
   if (words.isEmpty) return null;
 
-  // Sound first: "выключи звук" must never be read as anything else.
+  // Sound first: "turn the sound off" must never be read as anything else.
   final mute = _matchMute(words);
   if (mute != null) return mute;
 
@@ -183,6 +186,14 @@ List<String> _words(String utterance) => utterance
 /// An exact word.
 bool _has(List<String> words, String needle) => words.contains(needle);
 
+/// Two adjacent words, for English phrasal verbs: "turn on", "shut down".
+bool _hasPhrase(List<String> words, String first, String second) {
+  for (var i = 0; i + 1 < words.length; i++) {
+    if (words[i] == first && words[i + 1] == second) return true;
+  }
+  return false;
+}
+
 /// A word that starts with the stem: Russian inflects, and a command says
 /// "звука", "перезагрузи", "следующий" - the stem is what stays the same.
 bool _stem(List<String> words, String stem) =>
@@ -191,7 +202,7 @@ bool _stem(List<String> words, String stem) =>
 bool _hasAnyPrefix(List<String> words, List<String> prefixes) =>
     words.any((w) => prefixes.any((p) => w.startsWith(p)));
 
-/// Numbers the way people say them out loud.
+/// Numbers the way people say them out loud (Russian "сорок пять", "сто").
 const Map<String, int> _numeralWords = {
   'ноль': 0,
   'один': 1,
@@ -251,7 +262,11 @@ int? _number(List<String> words) {
 }
 
 bool _mentionsSound(List<String> words) =>
-    _stem(words, 'звук') || _stem(words, 'динамик') || _stem(words, 'шум');
+    _stem(words, 'звук') ||
+    _stem(words, 'динамик') ||
+    _stem(words, 'шум') ||
+    _has(words, 'sound') ||
+    _has(words, 'audio');
 
 bool _mentionsVolume(List<String> words) =>
     _stem(words, 'громкост') || _has(words, 'volume');
@@ -259,6 +274,7 @@ bool _mentionsVolume(List<String> words) =>
 bool _mentionsWifi(List<String> words) =>
     _stem(words, 'вайфай') ||
     _has(words, 'wifi') ||
+    _has(words, 'wireless') ||
     (_stem(words, 'вай') && _stem(words, 'фай')) ||
     (_has(words, 'wi') && _has(words, 'fi'));
 
@@ -270,23 +286,31 @@ bool _mentionsBluetooth(List<String> words) =>
 bool _mentionsSettings(List<String> words) =>
     _stem(words, 'настройк') ||
     _stem(words, 'параметр') ||
-    _has(words, 'settings');
+    _has(words, 'settings') ||
+    _has(words, 'setting');
 
 ParsedCommand? _matchMute(List<String> words) {
-  if (_stem(words, 'mute') ||
+  if (_has(words, 'mute') ||
+      _has(words, 'unmute') ||
+      _hasPhrase(words, 'sound', 'off') ||
+      _hasPhrase(words, 'sound', 'on') ||
       _hasAnyPrefix(words, ['заглуш', 'приглуш'])) {
-    return const ParsedCommand(AssistantIntent.setMute, {'muted': true});
+    // "unmute" and "sound on" mean the opposite of the rest.
+    final unmute = _has(words, 'unmute') || _hasPhrase(words, 'sound', 'on');
+    return ParsedCommand(AssistantIntent.setMute, {'muted': !unmute});
   }
   // "разглуши" carries no object of its own: the word is the whole command.
   if (_stem(words, 'разглуш')) {
     return const ParsedCommand(AssistantIntent.setMute, {'muted': false});
   }
   if (_mentionsSound(words)) {
-    if (_hasAnyPrefix(words, ['выключ', 'выруб'])) {
+    if (_hasAnyPrefix(words, ['выключ', 'выруб']) ||
+        _hasPhrase(words, 'turn', 'off')) {
       return const ParsedCommand(AssistantIntent.setMute, {'muted': true});
     }
     if (_hasAnyPrefix(words, ['включ', 'вруб', 'верн']) ||
-        _stem(words, 'разглуш')) {
+        _stem(words, 'разглуш') ||
+        _hasPhrase(words, 'turn', 'on')) {
       return const ParsedCommand(AssistantIntent.setMute, {'muted': false});
     }
     if (_stem(words, 'без')) {
@@ -300,9 +324,15 @@ ParsedCommand? _matchVolume(List<String> words) {
   final mentions = _mentionsVolume(words) || _mentionsSound(words);
   final louder = _stem(words, 'громче') ||
       _stem(words, 'погромче') ||
+      _has(words, 'louder') ||
+      _hasPhrase(words, 'turn', 'up') ||
+      _hasPhrase(words, 'turn', 'it') && _has(words, 'up') ||
       (mentions && _hasAnyPrefix(words, ['прибав', 'увелич', 'добав']));
   final quieter = _stem(words, 'тише') ||
       _stem(words, 'потише') ||
+      _has(words, 'quieter') ||
+      _hasPhrase(words, 'turn', 'down') ||
+      _hasPhrase(words, 'turn', 'it') && _has(words, 'down') ||
       (mentions && _hasAnyPrefix(words, ['убав', 'уменьш']));
 
   if (louder && !quieter) {
@@ -329,13 +359,16 @@ ParsedCommand? _matchBrightness(List<String> words) {
       'value': (percent / 100).clamp(0.0, 1.0),
     });
   }
-  if (_stem(words, 'ярче')) {
+  if (_stem(words, 'ярче') || _has(words, 'brighter')) {
     return const ParsedCommand(
       AssistantIntent.adjustBrightness,
       {'direction': 1.0},
     );
   }
-  if (_stem(words, 'темнее') || _stem(words, 'потускнее')) {
+  if (_stem(words, 'темнее') ||
+      _stem(words, 'потускнее') ||
+      _has(words, 'darker') ||
+      _has(words, 'dimmer')) {
     return const ParsedCommand(
       AssistantIntent.adjustBrightness,
       {'direction': -1.0},
@@ -348,47 +381,77 @@ ParsedCommand? _matchMedia(List<String> words) {
   if (_stem(words, 'пауз') ||
       _stem(words, 'играй') ||
       _stem(words, 'продолжи') ||
-      _stem(words, 'возобнови')) {
+      _stem(words, 'возобнови') ||
+      _has(words, 'pause') ||
+      _has(words, 'play') ||
+      _has(words, 'resume')) {
     return const ParsedCommand(AssistantIntent.mediaPlayPause);
   }
   final music = _stem(words, 'трек') ||
       _stem(words, 'песня') ||
       _stem(words, 'музык') ||
-      _stem(words, 'композиц');
-  if (music && (_stem(words, 'следующ') || _stem(words, 'дальше'))) {
+      _stem(words, 'композиц') ||
+      _has(words, 'track') ||
+      _has(words, 'song') ||
+      _has(words, 'music');
+  if (music &&
+      (_stem(words, 'следующ') ||
+          _stem(words, 'дальше') ||
+          _has(words, 'next'))) {
     return const ParsedCommand(AssistantIntent.mediaNext);
   }
-  if (music && (_stem(words, 'предыдущ') || _stem(words, 'назад'))) {
+  if (music &&
+      (_stem(words, 'предыдущ') ||
+          _stem(words, 'назад') ||
+          _has(words, 'previous'))) {
     return const ParsedCommand(AssistantIntent.mediaPrevious);
   }
   return null;
 }
 
 ParsedCommand? _matchPower(List<String> words) {
-  if (_hasAnyPrefix(words, ['заблокир', 'замкн'])) {
+  if (_hasAnyPrefix(words, ['заблокир', 'замкн']) ||
+      _has(words, 'lock') ||
+      _hasPhrase(words, 'lock', 'screen')) {
     return const ParsedCommand(AssistantIntent.lock);
   }
-  if (_stem(words, 'усып') || _stem(words, 'спящ') || _has(words, 'сон')) {
+  if (_stem(words, 'усып') ||
+      _stem(words, 'спящ') ||
+      _has(words, 'сон') ||
+      _has(words, 'sleep') ||
+      _has(words, 'suspend')) {
     return const ParsedCommand(AssistantIntent.sleep);
   }
   if (_stem(words, 'перезагруз') ||
       _stem(words, 'перезапуст') ||
-      _stem(words, 'ребут')) {
+      _stem(words, 'ребут') ||
+      _has(words, 'restart') ||
+      _has(words, 'reboot')) {
     return const ParsedCommand(AssistantIntent.restart);
   }
   if (_stem(words, 'заверши') && _stem(words, 'работ')) {
     return const ParsedCommand(AssistantIntent.shutdown);
   }
+  if (_hasPhrase(words, 'shut', 'down') ||
+      _has(words, 'shutdown') ||
+      _has(words, 'poweroff')) {
+    return const ParsedCommand(AssistantIntent.shutdown);
+  }
   final machine = _stem(words, 'комп') ||
       _stem(words, 'ноут') ||
       _stem(words, 'пк') ||
-      _stem(words, 'машина');
-  if (machine && _hasAnyPrefix(words, ['выключ', 'выруб'])) {
+      _stem(words, 'машина') ||
+      _has(words, 'computer') ||
+      _has(words, 'pc');
+  if (machine &&
+      (_hasAnyPrefix(words, ['выключ', 'выруб']) || _hasPhrase(words, 'turn', 'off'))) {
     return const ParsedCommand(AssistantIntent.shutdown);
   }
   if (_stem(words, 'выйти') ||
       _stem(words, 'выйд') ||
-      _stem(words, 'выход')) {
+      _stem(words, 'выход') ||
+      _hasPhrase(words, 'sign', 'out') ||
+      _hasPhrase(words, 'log', 'out')) {
     return const ParsedCommand(AssistantIntent.signOut);
   }
   if (_stem(words, 'заверши') && _stem(words, 'сеанс')) {
@@ -422,35 +485,51 @@ ParsedCommand? _matchSettings(List<String> words) {
   }
   if (_stem(words, 'яркост') ||
       _stem(words, 'экран') ||
-      _stem(words, 'дисплей')) {
+      _stem(words, 'дисплей') ||
+      _has(words, 'display') ||
+      _has(words, 'screen') ||
+      _has(words, 'brightness')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'display',
     });
   }
   if (_stem(words, 'мыш') ||
       _stem(words, 'клавиатур') ||
-      _stem(words, 'ввод')) {
+      _stem(words, 'ввод') ||
+      _has(words, 'mouse') ||
+      _has(words, 'keyboard') ||
+      _has(words, 'input')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'input',
     });
   }
   if (_stem(words, 'приложен') ||
       _stem(words, 'окн') ||
-      _stem(words, 'уведомлен')) {
+      _stem(words, 'уведомлен') ||
+      _has(words, 'apps') ||
+      _has(words, 'windows') ||
+      _has(words, 'notification') ||
+      _has(words, 'notifications')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'apps',
     });
   }
   if (_stem(words, 'обновлен') ||
       _stem(words, 'безопасн') ||
-      _stem(words, 'парол')) {
+      _stem(words, 'парол') ||
+      _has(words, 'update') ||
+      _has(words, 'security') ||
+      _has(words, 'password')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'security',
     });
   }
   if (_stem(words, 'язык') ||
       _stem(words, 'врем') ||
-      _stem(words, 'регион')) {
+      _stem(words, 'регион') ||
+      _has(words, 'language') ||
+      _has(words, 'time') ||
+      _has(words, 'region')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'language',
     });
@@ -459,7 +538,11 @@ ParsedCommand? _matchSettings(List<String> words) {
       _stem(words, 'цвет') ||
       _stem(words, 'тем') ||
       _stem(words, 'шрифт') ||
-      _stem(words, 'оформлен')) {
+      _stem(words, 'оформлен') ||
+      _has(words, 'wallpaper') ||
+      _has(words, 'colors') ||
+      _has(words, 'theme') ||
+      _has(words, 'fonts')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'appearance',
     });
@@ -474,9 +557,19 @@ ParsedCommand? _matchRadio(List<String> words) {
   final isBluetooth = _mentionsBluetooth(words);
   if (!isWifi && !isBluetooth) return null;
 
-  final on = _hasAnyPrefix(words, ['включ', 'подключ', 'вруб']);
-  final off = _hasAnyPrefix(words, ['выключ', 'отключ', 'выруб']);
-  final toggle = _hasAnyPrefix(words, ['переключ', 'перевкл']);
+  final on = _hasAnyPrefix(words, ['включ', 'подключ', 'вруб']) ||
+      _hasPhrase(words, 'turn', 'on') ||
+      _hasPhrase(words, 'switch', 'on') ||
+      _has(words, 'enable') ||
+      _has(words, 'on');
+  final off = _hasAnyPrefix(words, ['выключ', 'отключ', 'выруб']) ||
+      _hasPhrase(words, 'turn', 'off') ||
+      _hasPhrase(words, 'switch', 'off') ||
+      _has(words, 'disable') ||
+      _has(words, 'off');
+  final toggle = _hasAnyPrefix(words, ['переключ', 'перевкл']) ||
+      _has(words, 'toggle') ||
+      _has(words, 'switch');
   if (!on && !off && !toggle) return null;
 
   final intent =

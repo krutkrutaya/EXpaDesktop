@@ -45,11 +45,11 @@ enum RadioState {
   unavailable;
 
   String get label => switch (this) {
-        RadioState.on => 'Включено',
-        RadioState.off => 'Выключено',
-        RadioState.blocked => 'Отключено системой',
-        RadioState.unknown => 'Неизвестно',
-        RadioState.unavailable => 'Устройство не найдено',
+        RadioState.on => 'On',
+        RadioState.off => 'Off',
+        RadioState.blocked => 'Disabled by system',
+        RadioState.unknown => 'Unknown',
+        RadioState.unavailable => 'No device',
       };
 }
 
@@ -83,7 +83,7 @@ class RadioStatus {
 
   /// Short Russian description used in replies and captions.
   String get label {
-    if (state == RadioState.on && connected) return '${state.label}, подключено';
+    if (state == RadioState.on && connected) return '${state.label}, connected';
     return state.label;
   }
 
@@ -151,7 +151,7 @@ class RadioControl implements RadioSource {
       return RadioActionResult(
         ok: false,
         status: before,
-        message: '${kind.label}: устройство не найдено',
+        message: '${kind.label}: device not found',
       );
     }
 
@@ -188,7 +188,7 @@ class RadioControl implements RadioSource {
         ok: false,
         status: after,
         message: message.isEmpty
-            ? '${kind.label}: система не дала переключить'
+            ? '${kind.label}: the system refused the switch'
             : '${kind.label}: $message',
       );
     }

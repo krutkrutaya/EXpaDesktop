@@ -306,12 +306,12 @@ void testRadioLabels() {
   checkEquals('bluetooth fallback page', RadioKind.bluetooth.settingsUri,
       'ms-settings:bluetooth');
 
-  checkEquals('on label', RadioState.on.label, 'Включено');
-  checkEquals('off label', RadioState.off.label, 'Выключено');
-  checkEquals('blocked label', RadioState.blocked.label, 'Отключено системой');
-  checkEquals('unknown label', RadioState.unknown.label, 'Неизвестно');
+  checkEquals('on label', RadioState.on.label, 'On');
+  checkEquals('off label', RadioState.off.label, 'Off');
+  checkEquals('blocked label', RadioState.blocked.label, 'Disabled by system');
+  checkEquals('unknown label', RadioState.unknown.label, 'Unknown');
   checkEquals('unavailable label', RadioState.unavailable.label,
-      'Устройство не найдено');
+      'No device');
 
   const on = RadioStatus(kind: RadioKind.wifi, state: RadioState.on);
   const onLinked = RadioStatus(
@@ -320,9 +320,9 @@ void testRadioLabels() {
     connected: true,
   );
   const off = RadioStatus(kind: RadioKind.wifi, state: RadioState.off);
-  checkEquals('status label on', on.label, 'Включено');
-  checkEquals('status label on and linked', onLinked.label, 'Включено, подключено');
-  checkEquals('status label off', off.label, 'Выключено');
+  checkEquals('status label on', on.label, 'On');
+  checkEquals('status label on and linked', onLinked.label, 'On, connected');
+  checkEquals('status label off', off.label, 'Off');
   check('isOn is true for on', on.isOn);
   check('isOn is false for off', !off.isOn);
 }
@@ -356,7 +356,7 @@ void testCommandParser() {
     (phrase: 'Включи, вайфай!', intent: AssistantIntent.toggleWifi, params: {'on': true}),
     (phrase: '  включи   вайфай  ', intent: AssistantIntent.toggleWifi, params: {'on': true}),
     // volume
-    (phrase: 'громкость 40', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
+    (phrase: 'volume 40', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
     (phrase: 'громкость 40%', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
     (phrase: 'громкость 40 процентов', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
     (phrase: 'поставь громкость 50', intent: AssistantIntent.setVolume, params: {'value': 0.5}),
@@ -410,28 +410,28 @@ void testCommandParser() {
     (phrase: 'открой параметры windows', intent: AssistantIntent.openWindowsSettings, params: {'uri': 'ms-settings:'}),
     (phrase: 'настройки windows', intent: AssistantIntent.openWindowsSettings, params: {'uri': 'ms-settings:'}),
     // media
-    (phrase: 'пауза', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'pause', intent: AssistantIntent.mediaPlayPause, params: {}),
     (phrase: 'играй', intent: AssistantIntent.mediaPlayPause, params: {}),
     (phrase: 'продолжи', intent: AssistantIntent.mediaPlayPause, params: {}),
     (phrase: 'возобнови', intent: AssistantIntent.mediaPlayPause, params: {}),
-    (phrase: 'следующий трек', intent: AssistantIntent.mediaNext, params: {}),
+    (phrase: 'next track', intent: AssistantIntent.mediaNext, params: {}),
     (phrase: 'следующая песня', intent: AssistantIntent.mediaNext, params: {}),
-    (phrase: 'предыдущий трек', intent: AssistantIntent.mediaPrevious, params: {}),
+    (phrase: 'previous track', intent: AssistantIntent.mediaPrevious, params: {}),
     (phrase: 'предыдущая композиция', intent: AssistantIntent.mediaPrevious, params: {}),
     // brightness
     (phrase: 'сделай ярче', intent: AssistantIntent.adjustBrightness, params: {'direction': 1.0}),
     (phrase: 'ярче', intent: AssistantIntent.adjustBrightness, params: {'direction': 1.0}),
     (phrase: 'сделай темнее', intent: AssistantIntent.adjustBrightness, params: {'direction': -1.0}),
-    (phrase: 'яркость 60', intent: AssistantIntent.setBrightness, params: {'value': 0.6}),
+    (phrase: 'brightness 60', intent: AssistantIntent.setBrightness, params: {'value': 0.6}),
     (phrase: 'яркость 100', intent: AssistantIntent.setBrightness, params: {'value': 1.0}),
     (phrase: 'яркость сто', intent: AssistantIntent.setBrightness, params: {'value': 1.0}),
     // power
     (phrase: 'заблокируй экран', intent: AssistantIntent.lock, params: {}),
     (phrase: 'заблокируй компьютер', intent: AssistantIntent.lock, params: {}),
     (phrase: 'усыпи компьютер', intent: AssistantIntent.sleep, params: {}),
-    (phrase: 'спящий режим', intent: AssistantIntent.sleep, params: {}),
+    (phrase: 'sleep', intent: AssistantIntent.sleep, params: {}),
     (phrase: 'перезагрузи компьютер', intent: AssistantIntent.restart, params: {}),
-    (phrase: 'перезагрузка', intent: AssistantIntent.restart, params: {}),
+    (phrase: 'restart', intent: AssistantIntent.restart, params: {}),
     (phrase: 'ребут', intent: AssistantIntent.restart, params: {}),
     (phrase: 'выключи компьютер', intent: AssistantIntent.shutdown, params: {}),
     (phrase: 'выключи пк', intent: AssistantIntent.shutdown, params: {}),
@@ -439,6 +439,43 @@ void testCommandParser() {
     (phrase: 'выйти из системы', intent: AssistantIntent.signOut, params: {}),
     (phrase: 'заверши сеанс', intent: AssistantIntent.signOut, params: {}),
     (phrase: 'выход', intent: AssistantIntent.signOut, params: {}),
+    // english
+    (phrase: 'turn on wifi', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'turn off wifi', intent: AssistantIntent.toggleWifi, params: {'on': false}),
+    (phrase: 'toggle wifi', intent: AssistantIntent.toggleWifi, params: {}),
+    (phrase: 'wifi on', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'wifi off', intent: AssistantIntent.toggleWifi, params: {'on': false}),
+    (phrase: 'enable bluetooth', intent: AssistantIntent.toggleBluetooth, params: {'on': true}),
+    (phrase: 'disable bluetooth', intent: AssistantIntent.toggleBluetooth, params: {'on': false}),
+    (phrase: 'set volume 50', intent: AssistantIntent.setVolume, params: {'value': 0.5}),
+    (phrase: 'volume 100', intent: AssistantIntent.setVolume, params: {'value': 1.0}),
+    (phrase: 'louder', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'quieter', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    (phrase: 'turn it up', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'turn it down', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    (phrase: 'sound off', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'sound on', intent: AssistantIntent.setMute, params: {'muted': false}),
+    (phrase: 'unmute', intent: AssistantIntent.setMute, params: {'muted': false}),
+    (phrase: 'open sound settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'sound'}),
+    (phrase: 'open wifi settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'wifi'}),
+    (phrase: 'bluetooth settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'bluetooth'}),
+    (phrase: 'display settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'display'}),
+    (phrase: 'mouse settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'input'}),
+    (phrase: 'notification settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'apps'}),
+    (phrase: 'security settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'security'}),
+    (phrase: 'language settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'language'}),
+    (phrase: 'wallpaper settings', intent: AssistantIntent.openBuiltInSection, params: {'section': 'appearance'}),
+    (phrase: 'open windows settings', intent: AssistantIntent.openWindowsSettings, params: {'uri': 'ms-settings:'}),
+    (phrase: 'brighter', intent: AssistantIntent.adjustBrightness, params: {'direction': 1.0}),
+    (phrase: 'darker', intent: AssistantIntent.adjustBrightness, params: {'direction': -1.0}),
+    (phrase: 'play', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'resume', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'next song', intent: AssistantIntent.mediaNext, params: {}),
+    (phrase: 'previous song', intent: AssistantIntent.mediaPrevious, params: {}),
+    (phrase: 'lock the screen', intent: AssistantIntent.lock, params: {}),
+    (phrase: 'shut down the computer', intent: AssistantIntent.shutdown, params: {}),
+    (phrase: 'sign out', intent: AssistantIntent.signOut, params: {}),
+    (phrase: 'reboot', intent: AssistantIntent.restart, params: {}),
   ];
 
   for (final row in rows) {
@@ -503,24 +540,24 @@ Future<void> testRouter() async {
   final sink = _Recorder();
   final router = CommandRouter(sink: sink);
 
-  checkEquals('volume command reply', await router.run('громкость 40'), 'громкость 40');
+  checkEquals('volume command reply', await router.run('volume 40'), 'volume 40');
   checkEquals('volume command reaches the sink', sink.volumes, [0.4]);
 
-  checkEquals('volume step reply', await router.run('прибавь громкость'), 'громкость 42');
+  checkEquals('volume step reply', await router.run('прибавь громкость'), 'volume 42');
   checkEquals('volume step reaches the sink', sink.steps, [1.0]);
 
-  checkEquals('mute reply', await router.run('заглуши звук'), 'звук заглушён');
-  checkEquals('unmute reply', await router.run('включи звук'), 'звук включён');
+  checkEquals('mute reply', await router.run('заглуши звук'), 'sound muted');
+  checkEquals('unmute reply', await router.run('включи звук'), 'sound on');
   checkEquals('mute reaches the sink', sink.mutes, [true, false]);
 
-  checkEquals('wifi on reply', await router.run('включи вайфай'), 'Wi-Fi: включено');
+  checkEquals('wifi on reply', await router.run('включи вайфай'), 'Wi-Fi: on');
   checkEquals(
     'wifi off reply',
     await router.run('выключи вайфай'),
-    'Wi-Fi: выключено',
+    'Wi-Fi: off',
   );
   checkEquals('bluetooth off reply', await router.run('выключи блютуз'),
-      'Bluetooth: выключено');
+      'Bluetooth: off');
   checkEquals('radios reach the sink', sink.radios, [
     (RadioKind.wifi, true),
     (RadioKind.wifi, false),
@@ -528,39 +565,39 @@ Future<void> testRouter() async {
   ]);
 
   checkEquals('built-in section reply', await router.run('открой настройки звука'),
-      'открыл настройки');
+      'opened settings');
   checkEquals('built-in section reaches the sink', sink.sections, ['sound']);
 
   checkEquals('windows page reply', await router.run('открой параметры windows'),
-      'открыл параметры windows');
+      'opened windows settings');
   checkEquals('windows page reaches the sink', sink.pages, ['ms-settings:']);
 
-  checkEquals('brightness reply', await router.run('яркость 60'), 'яркость 60');
+  checkEquals('brightness reply', await router.run('brightness 60'), 'brightness 60');
   checkEquals('brightness reaches the sink', sink.brightness, 0.6);
   checkEquals('brightness step reply', await router.run('сделай ярче'),
-      'яркость изменена');
+      'brightness changed');
   checkEquals('brightness step reaches the sink', sink.brightness, 0.65);
 
-  checkEquals('play pause reply', await router.run('пауза'), 'пауза');
-  checkEquals('next reply', await router.run('следующий трек'), 'следующий трек');
-  checkEquals('previous reply', await router.run('предыдущий трек'),
-      'предыдущий трек');
+  checkEquals('play pause reply', await router.run('pause'), 'paused');
+  checkEquals('next reply', await router.run('next track'), 'next track');
+  checkEquals('previous reply', await router.run('previous track'),
+      'previous track');
   checkEquals('media reaches the sink', sink.media, ['playPause', 'next', 'previous']);
 
   checkEquals('lock reply', await router.run('заблокируй экран'),
-      'экран заблокирован');
-  checkEquals('sleep reply', await router.run('усыпи компьютер'), 'спящий режим');
+      'screen locked');
+  checkEquals('sleep reply', await router.run('усыпи компьютер'), 'sleeping');
   checkEquals('sign out reply', await router.run('выйти из системы'),
-      'выход из системы');
+      'signing out');
   checkEquals('restart reply', await router.run('перезагрузи компьютер'),
-      'перезагрузка');
-  checkEquals('shutdown reply', await router.run('выключи компьютер'), 'выключение');
+      'restarting');
+  checkEquals('shutdown reply', await router.run('выключи компьютер'), 'shutting down');
   checkEquals('power reaches the sink', sink.power,
       ['lock', 'sleep', 'signOut', 'restart', 'shutdown']);
 
   final before = sink.totalCalls;
   checkEquals('unknown command says so', await router.run('абракадабра'),
-      'не понял команду');
+      "didn't catch that");
   checkEquals('unknown command touches nothing', sink.totalCalls, before);
 }
 
@@ -601,15 +638,15 @@ void testPromptCatalog() {
 
   checkContains('prompt asks for JSON', assistantSystemPrompt, '{"intent"');
   checkContains('prompt says the shell owns its parameters',
-      assistantSystemPrompt, 'встроенных настройках');
+      assistantSystemPrompt, 'built-in settings');
   checkContains('prompt keeps ms-settings as the fallback',
       assistantSystemPrompt, 'ms-settings:<uri>');
   checkContains('prompt forbids closing the desktop for sound',
-      assistantSystemPrompt, 'никогда не закрывает');
+      assistantSystemPrompt, 'never closes');
   checkContains('prompt asks for confirmation before power actions',
-      assistantSystemPrompt, 'подтверждения');
+      assistantSystemPrompt, 'confirmation');
   checkContains('prompt tells the model to re-read the radio state',
-      assistantSystemPrompt, 'перечитать');
+      assistantSystemPrompt, 're-read');
   checkMissing('prompt has no "as an AI" filler', assistantSystemPrompt,
       'as an AI');
   check('prompt is long enough to be a prompt',

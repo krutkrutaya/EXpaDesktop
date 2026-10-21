@@ -3,7 +3,7 @@
 // Three sources, in order: the cover embedded in the mp3's ID3 tag, the
 // image the track table points at, and a placeholder drawn in the shell's own
 // style. The mini-player used to fall back to a hard-coded cover, so every
-// track without art was shown with Монеточка's face.
+// track without art was shown with another track's cover.
 
 import 'dart:typed_data';
 

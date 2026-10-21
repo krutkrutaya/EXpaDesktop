@@ -228,13 +228,13 @@ copies the DLL next to the exe when it is there, and skips it otherwise.
 
 Widget tests run under `flutter test`; the system, shell and physics suites are
 plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
-prints a single total — **779 checks**, plus **30 widget tests**.
+prints a single total — **840 checks**, plus **30 widget tests**.
 
 ```bash
 cd ExDesktop
 flutter test                                 # 30 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 779 mock checks
+dart run test/mock_all.dart                  # 840 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
 dart run test/system_mock_check.dart         # system + assistant, 415 checks
 dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 311 checks

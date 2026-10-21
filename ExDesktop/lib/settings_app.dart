@@ -429,7 +429,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
     return null;
   }
 
-  /// The first row that belongs to [section], so "открой настройки вайфай"
+  /// The first row that belongs to [section], so "open wifi settings"
   /// lands on the Wi-Fi row even though sections and rows have their own ids.
   static String? _idForSection(String? section) {
     if (section == null) return null;
@@ -695,7 +695,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
       children: [
         _DetailRow(
           icon: sound.muted ? Icons.volume_off : Icons.volume_up,
-          title: sound.muted ? 'Звук заглушён' : 'Громкость ${sound.percent}%',
+          title: sound.muted ? 'Sound muted' : 'Volume ${sound.percent}%',
           trailing: GlassToggle(
             value: !sound.muted,
             onChanged: (on) {
@@ -709,7 +709,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         Row(
           children: [
             const Text(
-              'Уровень',
+              'Level',
               style: TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const Spacer(),
@@ -733,13 +733,13 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         ),
         const SizedBox(height: 10),
         const Text(
-          'Ползунок управляет системной громкостью: окна при этом не '
-          'открываются, а оболочка остаётся на месте.',
+          'The slider drives the system volume: no windows open and the '
+          'shell stays where it is.',
           style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
         ),
         const Spacer(),
         _WindowsLink(
-          label: 'Другие настройки звука',
+          label: 'More sound settings',
           uri: item.uri,
         ),
       ],
@@ -769,29 +769,29 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         if (kind == RadioKind.wifi)
           _DetailRow(
             icon: Icons.signal_wifi_4_bar,
-            title: status.connected ? 'Сеть подключена' : 'Сеть не подключена',
+            title: status.connected ? 'Network connected' : 'Not connected',
           ),
         const SizedBox(height: 8),
         if (status.state == RadioState.unavailable)
           const Text(
-            'Устройство не найдено на этой машине.',
+            'No such device on this machine.',
             style: TextStyle(color: Colors.white38, fontSize: 12),
           )
         else if (!status.canToggle)
           const Text(
-            'Система не даёт переключить радио — включите его в Параметрах '
-            'Windows.',
+            'The system will not switch the radio — turn it on in Windows '
+            'Settings.',
             style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
           )
         else
           const Text(
-            'Переключение идёт через API радио Windows — без UAC и без '
-            'открытых окон.',
+            'Switching goes through the Windows radio API — no UAC, no '
+            'windows.',
             style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
           ),
         const Spacer(),
         _WindowsLink(
-          label: 'Открыть в Параметрах Windows',
+          label: 'Open in Windows Settings',
           uri: item.uri,
         ),
       ],
@@ -804,13 +804,13 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
       item: item,
       children: [
         const Text(
-          'Этот параметр живёт в Параметрах Windows. Оболочка открывает нужную '
-          'страницу, остальное система делает сама.',
+          'This setting lives in Windows Settings. The shell opens the right '
+          'page, the system does the rest.',
           style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
         ),
         const Spacer(),
         _WindowsLink(
-          label: 'Открыть в Параметрах Windows',
+          label: 'Open in Windows Settings',
           uri: item.uri,
         ),
       ],
@@ -826,31 +826,31 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
       item: item,
       children: [
         DisplaySlider(
-          label: 'Яркость',
+          label: 'Brightness',
           value: display.brightness,
           onChanged: display.onBrightness,
         ),
         const SizedBox(height: 10),
         DisplaySlider(
-          label: 'Контраст',
+          label: 'Contrast',
           value: display.contrast,
           onChanged: display.onContrast,
         ),
         const SizedBox(height: 10),
         DisplaySlider(
-          label: 'Теплота',
+          label: 'Warmth',
           value: display.warmth,
           onChanged: display.onWarmth,
         ),
         const SizedBox(height: 12),
         const Text(
-          'Яркость и контраст идут через DDC/CI, теплота — через гамму. '
-          'Теплота 0% — нейтральный экран.',
+          'Brightness and contrast go through DDC/CI, warmth through the gamma '
+          'ramp. Warmth 0% is a neutral screen.',
           style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
         ),
         const Spacer(),
         _WindowsLink(
-          label: 'Открыть в Параметрах Windows',
+          label: 'Open in Windows Settings',
           uri: item.uri,
         ),
       ],

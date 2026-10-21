@@ -28,12 +28,12 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
-    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.text('Calculator'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
     await _settle(tester);
 
-    expect(find.text('Калькулятор'), findsNothing);
+    expect(find.text('Calculator'), findsNothing);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
@@ -50,7 +50,7 @@ void main() {
     await _settle(tester);
 
     expect(find.text('Wi-Fi & internet'), findsNothing);
-    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.text('Calculator'), findsOneWidget);
 
     // The dock keeps a way back to the window.
     await tester.tap(find.byKey(const ValueKey('dock-settings')));
@@ -92,12 +92,12 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
-    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.text('Calculator'), findsOneWidget);
 
     await tester.tapAt(const Offset(240, 700));
     await _settle(tester);
 
-    expect(find.text('Калькулятор'), findsNothing);
+    expect(find.text('Calculator'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -121,13 +121,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
 
-    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.text('Calculator'), findsOneWidget);
     expect(find.byKey(const ValueKey('launcher-settings')), findsOneWidget);
     expect(find.byKey(const ValueKey('launcher-power')), findsOneWidget);
     expect(find.byKey(const ValueKey('launcher-terminal')), findsOneWidget);
-    expect(find.text('Настройки'), findsOneWidget);
-    expect(find.text('Питание'), findsOneWidget);
-    expect(find.text('Терминал'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Power'), findsOneWidget);
+    expect(find.text('Terminal'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -141,7 +141,7 @@ void main() {
 
     // The shell's own window, on its landing pane.
     expect(find.text('Select an item'), findsOneWidget);
-    expect(find.text('Калькулятор'), findsNothing);
+    expect(find.text('Calculator'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -151,17 +151,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
 
-    expect(find.text('Рабочий стол 1 из 1'), findsOneWidget);
-    expect(find.text('Новый'), findsOneWidget);
-    expect(find.text('Закрыть'), findsOneWidget);
+    expect(find.text('Desktop 1 of 1'), findsOneWidget);
+    expect(find.text('New'), findsOneWidget);
+    expect(find.text('Close'), findsOneWidget);
 
-    await tester.tap(find.text('Новый'));
+    await tester.tap(find.text('New'));
     await _settle(tester);
 
     // One dot per desktop, and the panel is gone.
     expect(find.byKey(const ValueKey('workspace-dot-0')), findsOneWidget);
     expect(find.byKey(const ValueKey('workspace-dot-1')), findsOneWidget);
-    expect(find.text('Новый'), findsNothing);
+    expect(find.text('New'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -171,7 +171,7 @@ void main() {
     // Create a second desktop from the panel.
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-    await tester.tap(find.text('Новый'));
+    await tester.tap(find.text('New'));
     await _settle(tester);
 
     // The new desktop is active: its dot in the dock is the tall one.
@@ -182,12 +182,12 @@ void main() {
     // Jump back with the chip: the highlight follows.
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-    expect(find.text('Рабочий стол 2 из 2'), findsOneWidget);
+    expect(find.text('Desktop 2 of 2'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('workspace-chip-0')));
     await _settle(tester);
 
-    expect(find.text('Рабочий стол 1 из 2'), findsOneWidget);
+    expect(find.text('Desktop 1 of 2'), findsOneWidget);
     expect(tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height,
         greaterThan(
             tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height));
@@ -199,12 +199,12 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-    expect(find.text('Новый'), findsOneWidget);
+    expect(find.text('New'), findsOneWidget);
 
     await tester.tapAt(const Offset(240, 700));
     await _settle(tester);
 
-    expect(find.text('Новый'), findsNothing);
+    expect(find.text('New'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -214,14 +214,14 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
-    expect(find.text('Калькулятор'), findsOneWidget);
+    expect(find.text('Calculator'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
 
     // Opening the workspaces closes the launcher: one surface at a time.
-    expect(find.text('Калькулятор'), findsNothing);
-    expect(find.text('Новый'), findsOneWidget);
+    expect(find.text('Calculator'), findsNothing);
+    expect(find.text('New'), findsOneWidget);
   });
 
   testWidgets('the buildings fit a 1366x768 screen', (tester) async {

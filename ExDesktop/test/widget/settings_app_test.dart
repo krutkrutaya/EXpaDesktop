@@ -20,9 +20,9 @@ void main() {
 
     // The row in the list and the pane header both carry the title.
     expect(find.text('Sound settings'), findsNWidgets(2));
-    expect(find.text('Уровень'), findsOneWidget);
+    expect(find.text('Level'), findsOneWidget);
     expect(find.text('40%'), findsOneWidget);
-    expect(find.text('Громкость 40%'), findsOneWidget);
+    expect(find.text('Volume 40%'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -34,7 +34,7 @@ void main() {
     await tester.pump();
 
     expect(sound.muted, isTrue);
-    expect(find.text('Звук заглушён'), findsOneWidget);
+    expect(find.text('Sound muted'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -51,23 +51,23 @@ void main() {
     );
     await _open(tester, section: 'wifi', radio: radio);
 
-    expect(find.text('Включено, подключено'), findsOneWidget);
-    expect(find.text('Сеть подключена'), findsOneWidget);
+    expect(find.text('On, connected'), findsOneWidget);
+    expect(find.text('Network connected'), findsOneWidget);
     expect(find.text('Test Wi-Fi'), findsOneWidget);
 
     await tester.tap(find.byType(GlassToggle));
     await tester.pumpAndSettle();
 
     expect(radio.calls, [(RadioKind.wifi, false)]);
-    expect(find.text('Выключено'), findsOneWidget);
-    expect(find.text('Сеть не подключена'), findsOneWidget);
+    expect(find.text('Off'), findsOneWidget);
+    expect(find.text('Not connected'), findsOneWidget);
   });
 
   testWidgets('a machine without the radio says so', (tester) async {
     await _open(tester, section: 'bluetooth', radio: _FakeRadio());
 
-    expect(find.text('Устройство не найдено'), findsOneWidget);
-    expect(find.text('Устройство не найдено на этой машине.'), findsOneWidget);
+    expect(find.text('No device'), findsOneWidget);
+    expect(find.text('No such device on this machine.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -80,8 +80,8 @@ void main() {
     );
     await _open(tester, section: 'bluetooth', radio: radio);
 
-    expect(find.text('Отключено системой'), findsOneWidget);
-    expect(find.textContaining('Система не даёт переключить'), findsOneWidget);
+    expect(find.text('Disabled by system'), findsOneWidget);
+    expect(find.textContaining('The system will not switch the radio'), findsOneWidget);
   });
 
   testWidgets('rows the shell does not own keep their Windows link',
@@ -89,8 +89,8 @@ void main() {
     await _open(tester, section: 'appearance');
 
     expect(find.text('Wallpaper'), findsWidgets);
-    expect(find.text('Открыть в Параметрах Windows'), findsOneWidget);
-    expect(find.textContaining('живёт в Параметрах Windows'), findsOneWidget);
+    expect(find.text('Open in Windows Settings'), findsOneWidget);
+    expect(find.textContaining('lives in Windows Settings'), findsOneWidget);
   });
 
   testWidgets('nothing selected shows the hint', (tester) async {
@@ -122,7 +122,7 @@ void main() {
       (tester) async {
     final sound = _FakeSound(volume: 0.5);
     await _open(tester, section: 'sound', sound: sound);
-    expect(find.text('Уровень'), findsOneWidget);
+    expect(find.text('Level'), findsOneWidget);
 
     await tester.pumpWidget(_host(_settings(
       section: 'wifi',
@@ -131,7 +131,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    expect(find.text('Уровень'), findsNothing);
+    expect(find.text('Level'), findsNothing);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
   });
 
@@ -154,9 +154,9 @@ void main() {
 
     await _open(tester, section: 'display', display: display);
 
-    expect(find.text('Яркость'), findsOneWidget);
-    expect(find.text('Контраст'), findsOneWidget);
-    expect(find.text('Теплота'), findsOneWidget);
+    expect(find.text('Brightness'), findsOneWidget);
+    expect(find.text('Contrast'), findsOneWidget);
+    expect(find.text('Warmth'), findsOneWidget);
 
     // The numbers have to be the live ones: warmth 0 is a neutral screen,
     // and showing 50% there was the bug.

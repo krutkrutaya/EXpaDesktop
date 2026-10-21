@@ -180,7 +180,7 @@ class _MyHomePageState extends State<MyHomePage>
     },
     'b5607d8a7d89812.mp3': {
       'title': 'Track Test',
-      'artist': 'Неизвестно',
+      'artist': 'Unknown artist',
       'avatar': '',
     },
     'monetochka-kazhdyjj-raz.mp3': {
@@ -207,7 +207,7 @@ class _MyHomePageState extends State<MyHomePage>
     },
     {
       'title': 'Track Test',
-      'artist': 'Неизвестно',
+      'artist': 'Unknown artist',
       'duration': '2:00',
       'avatar': '',
       'file': 'b5607d8a7d89812.mp3',
@@ -850,19 +850,19 @@ class _MyHomePageState extends State<MyHomePage>
   List<Widget> get _launcherTiles => [
           _LauncherTile(
             icon: Icons.calculate_outlined,
-            label: 'Калькулятор',
+            label: 'Calculator',
             onTap: () => unawaited(
               launchAppFolder('Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'),
             ),
           ),
           _LauncherTile(
             icon: Icons.notes_outlined,
-            label: 'Блокнот',
+            label: 'Notepad',
             onTap: () => unawaited(launchExe('notepad.exe')),
           ),
           _LauncherTile(
             icon: Icons.folder_outlined,
-            label: 'Файлы',
+            label: 'Files',
             onTap: () => unawaited(launchExe('explorer.exe')),
           ),
           _LauncherTile(
@@ -872,18 +872,18 @@ class _MyHomePageState extends State<MyHomePage>
           ),
           _LauncherTile(
             icon: Icons.photo_camera_outlined,
-            label: 'Снимок',
+            label: 'Snip',
             onTap: () => unawaited(openShellLocation('ms-screenclip:')),
           ),
           _LauncherTile(
             icon: Icons.donut_large_outlined,
-            label: 'Задачи',
+            label: 'Tasks',
             onTap: () => unawaited(launchExe('taskmgr.exe')),
           ),
 
           _LauncherTile(
             icon: Icons.public_outlined,
-            label: 'Браузер',
+            label: 'Browser',
             onTap: () => unawaited(launchExe('msedge.exe')),
           ),
 
@@ -910,7 +910,7 @@ class _MyHomePageState extends State<MyHomePage>
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text(
-              'Отмена',
+              'Cancel',
               style: TextStyle(color: Colors.white70),
             ),
           ),
@@ -920,7 +920,7 @@ class _MyHomePageState extends State<MyHomePage>
               unawaited(action());
             },
             child: const Text(
-              'Да',
+              'Yes',
               style: TextStyle(color: Colors.white),
             ),
           ),
@@ -1041,7 +1041,7 @@ class _MyHomePageState extends State<MyHomePage>
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.zero,
                       hintText:
-                          'включи вайфай • громкость 40 • открой настройки звука',
+                          'turn on wifi • volume 40 • open sound settings',
                       hintStyle:
                           TextStyle(color: Colors.white38, fontSize: 14),
                     ),
@@ -1804,7 +1804,7 @@ class _MyHomePageState extends State<MyHomePage>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          'Рабочий стол ${_workspaces.activeIndex + 1} из ${_workspaces.count}',
+                          'Desktop ${_workspaces.activeIndex + 1} of ${_workspaces.count}',
                           style: const TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                         const SizedBox(height: 10),
@@ -1853,7 +1853,7 @@ class _MyHomePageState extends State<MyHomePage>
                           children: [
                             _LauncherTile(
                               icon: Icons.add_to_photos_outlined,
-                              label: 'Новый',
+                              label: 'New',
                               onTap: () => _runWorkspaceAction(() {
                                 _workspaces.create();
                               }),
@@ -1861,19 +1861,19 @@ class _MyHomePageState extends State<MyHomePage>
                             const SizedBox(width: 6),
                             _LauncherTile(
                               icon: Icons.arrow_back,
-                              label: 'Назад',
+                              label: 'Back',
                               onTap: () => _runWorkspaceAction(_workspaces.previous),
                             ),
                             const SizedBox(width: 6),
                             _LauncherTile(
                               icon: Icons.arrow_forward,
-                              label: 'Вперёд',
+                              label: 'Forward',
                               onTap: () => _runWorkspaceAction(_workspaces.next),
                             ),
                             const SizedBox(width: 6),
                             _LauncherTile(
                               icon: Icons.delete_outline,
-                              label: 'Закрыть',
+                              label: 'Close',
                               onTap: () => _runWorkspaceAction(() {
                                 _workspaces.closeActive();
                               }),
@@ -1918,7 +1918,7 @@ class _MyHomePageState extends State<MyHomePage>
                               icon: Icons.logout,
                               onTap: () => _confirmThen(
                                 signOut,
-                                'Выйти из системы?',
+                                'Sign out?',
                               ),
                             ),
                             const SizedBox(width: 1),
@@ -1926,7 +1926,7 @@ class _MyHomePageState extends State<MyHomePage>
                               icon: Icons.restart_alt,
                               onTap: () => _confirmThen(
                                 restartMachine,
-                                'Перезагрузить компьютер?',
+                                'Restart the computer?',
                               ),
                             ),
                             const SizedBox(width: 1),
@@ -1934,7 +1934,7 @@ class _MyHomePageState extends State<MyHomePage>
                               icon: Icons.bedtime,
                               onTap: () => _confirmThen(
                                 sleepMachine,
-                                'Усыпить компьютер?',
+                                'Put the computer to sleep?',
                               ),
                             ),
                             const SizedBox(width: 1),
@@ -1942,7 +1942,7 @@ class _MyHomePageState extends State<MyHomePage>
                               icon: Icons.power_settings_new,
                               onTap: () => _confirmThen(
                                 shutdownMachine,
-                                'Выключить компьютер?',
+                                'Shut down the computer?',
                               ),
                             ),
                             const SizedBox(width: 1),
@@ -2401,7 +2401,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-settings'),
               icon: Icons.settings_outlined,
-              label: 'Настройки',
+              label: 'Settings',
               onTap: onSettings,
             ),
           ),
@@ -2409,7 +2409,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-power'),
               icon: Icons.power_settings_new,
-              label: 'Питание',
+              label: 'Power',
               onTap: onPower,
             ),
           ),
@@ -2417,7 +2417,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-terminal'),
               icon: Icons.terminal_outlined,
-              label: 'Терминал',
+              label: 'Terminal',
               onTap: onTerminal,
             ),
           ),

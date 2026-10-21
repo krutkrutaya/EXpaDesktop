@@ -4,7 +4,8 @@
 // The prompt is the thing a language model is given; the catalog is the
 // machine-readable twin of the same list, so the buttons, the voice path and
 // the prompt can never drift apart. A mock test checks that every intent in
-// the catalog is named in the prompt.
+// the catalog is named in the prompt and that every example parses to its own
+// intent.
 
 /// What the assistant can be asked to do.
 enum AssistantIntent {
@@ -55,7 +56,8 @@ enum AssistantIntent {
 class IntentSpec {
   final AssistantIntent intent;
 
-  /// The Russian phrases that mean this intent.
+  /// The phrasings that mean this intent. English first, then the Russian
+  /// ones the matcher also understands.
   final List<String> examples;
 
   /// What the shell actually does.
@@ -78,188 +80,187 @@ const List<IntentSpec> assistantIntents = [
   IntentSpec(
     intent: AssistantIntent.toggleWifi,
     examples: [
-      'включи вайфай',
-      'выключи вайфай',
-      'переключи вайфай',
+      'turn on wifi',
+      'turn off wifi',
+      'toggle wifi',
     ],
-    action: 'переключить радио Wi-Fi через Windows.Devices.Radios, затем '
-        'перечитать состояние и сказать результат',
+    action: 'switch the Wi-Fi radio through Windows.Devices.Radios, then '
+        're-read the state and report it',
     fallbackUri: 'ms-settings:network-wifi',
   ),
   IntentSpec(
     intent: AssistantIntent.toggleBluetooth,
     examples: [
-      'включи блютуз',
-      'выключи блютуз',
+      'turn on bluetooth',
+      'turn off bluetooth',
     ],
-    action: 'переключить радио Bluetooth через Windows.Devices.Radios, затем '
-        'перечитать состояние и сказать результат',
+    action: 'switch the Bluetooth radio through Windows.Devices.Radios, then '
+        're-read the state and report it',
     fallbackUri: 'ms-settings:bluetooth',
   ),
   IntentSpec(
     intent: AssistantIntent.setVolume,
     examples: [
-      'громкость 40',
-      'поставь громкость 50 процентов',
-      'сделай громкость 30',
+      'volume 40',
+      'set volume 50',
+      'volume 30',
     ],
-    action: 'задать мастер-громкость через IAudioEndpointVolume, окна не '
-        'открывать',
+    action: 'set the master volume through IAudioEndpointVolume, never open '
+        'a window',
   ),
   IntentSpec(
     intent: AssistantIntent.adjustVolume,
     examples: [
-      'прибавь громкость',
-      'убавь громкость',
-      'громче',
-      'тише',
+      'turn it up',
+      'turn it down',
+      'louder',
+      'quieter',
     ],
-    action: 'сдвинуть мастер-громкость на шаг (2%), окна не открывать',
+    action: 'step the master volume by 2%, never open a window',
   ),
   IntentSpec(
     intent: AssistantIntent.setMute,
     examples: [
-      'заглуши звук',
-      'выключи звук',
-      'включи звук',
+      'mute',
+      'sound off',
+      'sound on',
     ],
-    action: 'заглушить или включить мастер-звук, окна не открывать',
+    action: 'mute or unmute the master volume, never open a window',
   ),
   IntentSpec(
     intent: AssistantIntent.openBuiltInSection,
     examples: [
-      'открой настройки звука',
-      'покажи настройки вайфай',
-      'настройки блютуза',
+      'open sound settings',
+      'open wifi settings',
+      'bluetooth settings',
     ],
-    action: 'открыть раздел во встроенных настройках оболочки, где параметр '
-        'живёт как настоящий контрол',
+    action: 'open that section of the shell\'s own settings, where the '
+        'parameter is a real control',
   ),
   IntentSpec(
     intent: AssistantIntent.openWindowsSettings,
     examples: [
-      'открой параметры windows',
-      'настройки windows',
+      'open windows settings',
     ],
-    action: 'открыть страницу Параметров Windows через ms-settings:<uri>, '
-        'только если раздела нет во встроенных настройках',
+    action: 'open a Windows Settings page through ms-settings:<uri>, only '
+        'when the shell does not own the section',
   ),
   IntentSpec(
     intent: AssistantIntent.setBrightness,
     examples: [
-      'яркость 60',
-      'яркость 100',
+      'brightness 60',
+      'brightness 100',
     ],
-    action: 'задать яркость через DDC/CI (native DLL), без окон',
+    action: 'set the monitor brightness through DDC/CI (native DLL), no '
+        'windows',
   ),
   IntentSpec(
     intent: AssistantIntent.adjustBrightness,
     examples: [
-      'сделай ярче',
-      'сделай темнее',
+      'brighter',
+      'darker',
     ],
-    action: 'сдвинуть яркость на шаг через DDC/CI, без окон',
+    action: 'step the brightness through DDC/CI, no windows',
   ),
   IntentSpec(
     intent: AssistantIntent.mediaPlayPause,
-    examples: ['пауза', 'играй', 'продолжи'],
-    action: 'медиа-клавиша play/pause',
+    examples: ['pause', 'play', 'resume'],
+    action: 'media key: play/pause',
   ),
   IntentSpec(
     intent: AssistantIntent.mediaNext,
-    examples: ['следующий трек', 'следующая песня'],
-    action: 'медиа-клавиша next',
+    examples: ['next track', 'next song'],
+    action: 'media key: next',
   ),
   IntentSpec(
     intent: AssistantIntent.mediaPrevious,
-    examples: ['предыдущий трек', 'предыдущая песня'],
-    action: 'медиа-клавиша previous',
+    examples: ['previous track', 'previous song'],
+    action: 'media key: previous',
   ),
   IntentSpec(
     intent: AssistantIntent.lock,
-    examples: ['заблокируй экран', 'замкни компьютер'],
+    examples: ['lock the screen', 'lock computer'],
     action: 'LockWorkStation',
   ),
   IntentSpec(
     intent: AssistantIntent.sleep,
-    examples: ['усыпи компьютер', 'спящий режим'],
+    examples: ['sleep', 'suspend the computer'],
     action: 'SetSuspendState',
   ),
   IntentSpec(
     intent: AssistantIntent.signOut,
-    examples: ['выйди из системы', 'заверши сеанс'],
+    examples: ['sign out'],
     action: 'shutdown /l',
   ),
   IntentSpec(
     intent: AssistantIntent.restart,
-    examples: ['перезагрузи компьютер', 'перезапусти'],
-    action: 'shutdown /r /t 0, с подтверждением',
+    examples: ['restart the computer', 'reboot'],
+    action: 'shutdown /r /t 0, after confirmation',
   ),
   IntentSpec(
     intent: AssistantIntent.shutdown,
-    examples: ['выключи компьютер', 'заверши работу'],
-    action: 'shutdown /s /t 0, с подтверждением',
+    examples: ['shut down the computer', 'shutdown'],
+    action: 'shutdown /s /t 0, after confirmation',
   ),
 ];
 
 /// The system prompt the assistant runs on.
 ///
 /// It is written for a model that returns one action per turn, and it keeps
-/// the two rules that used to be broken: the shell owns the parameters it
-/// can own, and a sound command never closes the desktop.
+/// the two rules that used to be broken: the shell owns the parameters it can
+/// own, and a sound command never closes the desktop.
 const String assistantSystemPrompt = r'''
-# Роль
-Ты — голосовой ассистент оболочки EXpaDesktop на Windows. Ты получаешь команду
-пользователя (голосом или текстом) и возвращаешь ровно одно действие. Диалог не
-ведёшь, интерфейс не описываешь, списков не перечисляешь.
+# Role
+You are the voice assistant of the EXpaDesktop shell on Windows. You receive
+one command from the user (spoken or typed) and return exactly one action. You
+do not chat, you do not describe the interface, you do not list options.
 
-# Формат ответа — строго JSON, без текста вокруг
-{"intent": "<intent>", "params": {…}, "reply": "<короткая фраза пользователю>"}
+# Reply format
+Exactly one JSON object, nothing around it:
+{"intent": "<intent>", "params": {…}, "reply": "<one short sentence>"}
 
-# Где живут параметры
-Параметры, которыми оболочка умеет управлять сама (Wi-Fi, Bluetooth, звук и
-громкость, яркость), живут во встроенных настройках оболочки и в её верхней
-панели. Встроенные настройки — источник истины.
+# Where the parameters live
+Every parameter the shell can drive itself (Wi-Fi, Bluetooth, sound and
+volume, brightness) lives in the shell's own built-in settings and in its top
+bar. The built-in settings are the source of truth.
 
-ms-settings:<uri> — только запасной вариант:
-  — раздела нет во встроенных настройках;
-  — системе нужно подтверждение или права администратора.
-Никогда не открывай ms-settings для того, что уже есть в оболочке.
+ms-settings:<uri> is only the fallback:
+  - the section does not exist in the shell;
+  - the system needs a confirmation or administrator rights.
+Never open ms-settings for something the shell already has.
 
-# Каталог намерений
-- toggle_wifi: включи/выключи/переключи вайфай. Переключить радио, перечитать
-  состояние, сказать фактический результат. Если система не дала —
-  ms-settings:network-wifi.
-- toggle_bluetooth: то же самое для Bluetooth. Если система не дала —
-  ms-settings:bluetooth.
-- set_volume: громкость N / потише / погромче. Задать мастер-громкость, окна не
-  открывать.
-- adjust_volume: прибавь/убавь громкость, громче, тише. Шаг 2%.
-- set_mute: заглуши, выключи звук, включи звук. Только звук, окна не открывать.
-- open_settings_section: открой настройки звука / вайфай / блютуза. Открыть
-  раздел во встроенных настройках оболочки.
-- open_windows_settings: то, чего во встроенных настройках нет. ms-settings:<uri>.
-- set_brightness: яркость N. Через DDC/CI.
-- adjust_brightness: ярче, темнее. Сдвинуть яркость на шаг, без окон.
-- media_play_pause / media_next / media_previous: пауза, играй, следующий трек,
-  предыдущий трек.
-- lock / sleep / sign_out / restart / shutdown: блокировка, сон, выход,
-  перезагрузка, выключение. Перезагрузка и выключение — только после
-  подтверждения пользователя.
+# Intent catalog
+- toggle_wifi: turn on / turn off / toggle wifi. Switch the radio, then
+  re-read the state and report the real result. If the system refuses,
+  fall back to ms-settings:network-wifi.
+- toggle_bluetooth: the same for Bluetooth, fallback ms-settings:bluetooth.
+- set_volume: "volume 40", "set volume 50". Set the master volume, never
+  open a window.
+- adjust_volume: louder / quieter / turn it up / turn it down. Step by 2%.
+- set_mute: mute / sound off / sound on. Sound only, never open a window.
+- open_settings_section: open sound / wifi / bluetooth settings. Open that
+  section of the shell's own built-in settings.
+- open_windows_settings: something the shell does not own. ms-settings:<uri>.
+- set_brightness: "brightness 60". Through DDC/CI.
+- adjust_brightness: brighter / darker. Step the brightness, no windows.
+- media_play_pause / media_next / media_previous: pause, play, next track,
+  previous track.
+- lock / sleep / sign_out / restart / shutdown: lock, sleep, sign out,
+  restart, shut down. Restart and shutdown only after the user confirms.
 
-# Правила
-1. «включи / выключи / переключи» — это действие над состоянием, а не
-   открытие окна. Никогда не подменяй его открытием Параметров.
-2. После переключения радио ответ должен опираться на состояние, которое
-   система вернула после действия, а не на предположение.
-3. Команда про звук никогда не закрывает, не сворачивает и не прячет окно
-   оболочки. Звук — это звук.
-4. Если параметр не назван (какую именно сеть, какое устройство) — задай один
-   уточняющий вопрос и ничего не выполняй.
-5. Reply — одна короткая фраза в нижнем регистре: «вайфай выключен»,
-   «громкость 40», «звук заглушён». Без объяснений и без извинений.
-6. Не выполняй опасные действия (перезагрузка, выключение, выход) без
-   подтверждения.
-7. Если команда непонятна — intent "unknown" и короткий вопрос, что именно
-   имелось в виду.
+# Rules
+1. "Turn on / off / toggle" is an action on the state, not opening a window.
+   Never replace it with opening Settings.
+2. After switching a radio, base the reply on the state the system returned
+   after the action, not on an assumption.
+3. A sound command never closes, minimises or hides the shell window. Sound
+   is sound.
+4. If the parameter is missing (which network, which device), ask one
+   clarifying question and do nothing.
+5. The reply is one short sentence: "wifi off", "volume 40", "sound muted".
+   No explanations, no apologies.
+6. Never run a dangerous action (restart, shutdown, sign out) without
+   confirmation.
+7. If the command makes no sense, answer with intent "unknown" and one short
+   question about what was meant.
 ''';
