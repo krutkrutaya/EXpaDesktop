@@ -29,6 +29,18 @@ Requirements for the Windows build:
 - **Developer Mode** on (Flutter symlinks plugin packages on Windows):
   `start ms-settings:developers`
 
+> **`nuget.exe` on PATH.** The `audioplayers_windows` plugin pulls
+> `nuget.exe` and the WIL package at configure time. CMake's downloader can
+> fail on some networks (`schannel: server closed abruptly`); dropping
+> `nuget.exe` somewhere on PATH (`C:\src\nuget`) makes the plugin skip its
+> download and use yours.
+>
+> ```powershell
+> New-Item -ItemType Directory -Force C:\src\nuget | Out-Null
+> curl.exe -L -o C:\src\nuget\nuget.exe https://dist.nuget.org/win-x86-commandline/v6.5.0/nuget.exe
+> $env:Path = "C:\src\nuget;$env:Path"
+> ```
+
 ## Layout
 
 | Path | What |

@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    name: analyze + tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ExDesktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Widget tests
+        run: flutter test
+
+      - name: Mock suites (465 checks)
+        run: dart run test/mock_all.dart
+
+  build:
+    name: windows release build
+    runs-on: windows-latest
+    needs: checks
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: ExDesktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build
+        run: flutter build windows --release
+
+      - name: Upload the exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp_desktop-windows
+          path: ExDesktop/build/windows/x64/runner/Release/
+          if-no-files-found: error

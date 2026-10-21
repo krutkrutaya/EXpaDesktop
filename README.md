@@ -23,6 +23,8 @@ clock, wallpaper slideshow, floating glass panels and a built-in music
 player — everything opens and closes **as a drop of liquid glass**
 that grows out of a button and dissolves back into it.
 
+![EXpaDesktop](docs/screenshot.jpg)
+
 ## 🌊 Liquid Glass Animations
 
 Panel animations are a Dart port of
