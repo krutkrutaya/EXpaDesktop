@@ -135,7 +135,9 @@ class _WaveSliderState extends State<WaveSlider>
               final span = math.max(width - pad * 2, 1.0);
               final from =
                   _dragStartValue + (d.localPosition.dx - _dragStartX) / span;
-              _stretch = (_stretch * 0.5 + d.delta.dx * 1.6)
+              // The pull tracks the finger speed: the faster the stroke,
+              // the longer the droplet.
+              _stretch = (_stretch * 0.45 + d.delta.dx * 1.0)
                   .clamp(-widget.thumbRadius * 2, widget.thumbRadius * 2);
               _apply(from);
             },
@@ -240,13 +242,15 @@ class _WavePainter extends CustomPainter {
       }
     }
 
-    // Thumb: a droplet that stretches against the drag direction.
+    // Thumb: a droplet that stretches against the drag direction — lead it
+    // left and the right side stretches, lead it right and the left one
+    // does; the faster the stroke the longer it pulls.
     final r = thumbRadius * thumbScale;
-    final s = stretch.clamp(-r * 1.25, r * 1.25);
+    final s = stretch.clamp(-r * 1.6, r * 1.6);
     final sa = s.abs();
-    final rx = r + sa * 1.1;
-    final ry = r * (1 - 0.35 * (sa / (sa + r)));
-    final cx = thumbX - s * 0.8;
+    final rx = r + sa * 0.9;
+    final ry = r * (1 - 0.3 * (sa / (sa + r)));
+    final cx = thumbX - s * 0.7;
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(cx, cy),
