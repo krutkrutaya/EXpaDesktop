@@ -15,3 +15,6 @@ build/
 # Windows
 Thumbs.db
 Desktop.ini
+
+# Local agent instructions, not part of the repo
+AGENTS.md
