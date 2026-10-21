@@ -422,7 +422,22 @@ class _MyHomePageState extends State<MyHomePage>
 
   void _loadBrightnessLib() {
     try {
-      _brightnessLib = DynamicLibrary.open('lib/rust/brightness.dll');
+      // Next to the exe in a release build (CMake copies it there), or in
+      // lib/rust/ when running from the project with `flutter run`.
+      Object? lastError;
+      for (final candidate in const [
+        'brightness.dll',
+        'lib/rust/brightness.dll',
+        'data/flutter_assets/lib/rust/brightness.dll',
+      ]) {
+        try {
+          _brightnessLib = DynamicLibrary.open(candidate);
+          break;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      if (_brightnessLib == null) throw lastError ?? 'brightness.dll not found';
       _setBrightness = _brightnessLib!
           .lookup<NativeFunction<SetBrightnessNative>>('set_brightness')
           .asFunction();

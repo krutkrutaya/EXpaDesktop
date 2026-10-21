@@ -26,11 +26,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"exp_desktop", origin, size)) {
+  Win32Window::Size size(1600, 900);
+  if (!window.Create(L"EXpaDesktop", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
+  // The shell is a desktop surface: open it over the whole screen. The title
+  // bar stays, so there is always a way out of a fullscreen app.
+  ::ShowWindow(window.GetHandle(), SW_SHOWMAXIMIZED);
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

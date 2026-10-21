@@ -106,3 +106,8 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# The brightness controller (DDC/CI + gamma) is a native library that the
+# Dart side loads by name, so it has to sit next to the exe.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/brightness.dll"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
