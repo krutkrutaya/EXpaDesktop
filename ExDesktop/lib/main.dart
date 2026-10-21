@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'player.dart';
@@ -82,6 +83,11 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   double _warmth = 0.5;
   int _selectedTrack = 0;
   double _trackProgress = 0.0;
+
+  // Playback modes, wired to the player panel.
+  bool _isLooping = false; // loop the current track
+  bool _isRepeatPlaylist = true; // wrap around at the end of the list
+  bool _isShuffle = false; // random next track
 
   // Liquid-glass panel morphs; created in didChangeDependencies, where the
   // window size (and so the button/menu rects) is known.
@@ -234,8 +240,21 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       }
     });
     _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted && _isPlaying) {
-        _nextTrack();
+      if (!mounted) return;
+      if (_isLooping) {
+        // Replay the same track from the top.
+        final file = _tracks[_selectedTrack]['file'];
+        if (file != null && file.isNotEmpty) {
+          _audioPlayer.play(AssetSource('music/$file'));
+        }
+        return;
+      }
+      if (_isRepeatPlaylist || _selectedTrack < _tracks.length - 1) {
+        _goToTrack(_pickNext());
+      } else {
+        setState(() => _isPlaying = false);
+        _rotationController.stop();
+        _progressTimer?.cancel();
       }
     });
   }
@@ -339,42 +358,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     });
   }
 
-  void _nextTrack() async {
-    setState(() {
-      _selectedTrack = (_selectedTrack + 1) % _tracks.length;
-      _trackProgress = 0.0;
-      _currentTime = '0:00';
-      _audioDuration = null;
-    });
-    if (_isPlaying) {
-      _startTrackProgress();
-      await _playWithDelay();
-    }
-  }
-
-  void _prevTrack() async {
-    setState(() {
-      _selectedTrack = (_selectedTrack - 1 + _tracks.length) % _tracks.length;
-      _trackProgress = 0.0;
-      _currentTime = '0:00';
-      _audioDuration = null;
-    });
-    if (_isPlaying) {
-      _startTrackProgress();
-      await _playWithDelay();
-    }
-  }
-
-  void _seekTrack(double value) async {
-    setState(() {
-      _trackProgress = value.clamp(0.0, 1.0);
-    });
-    if (_audioDuration != null) {
-      await _audioPlayer.seek(Duration(milliseconds: (_audioDuration!.inMilliseconds * value).toInt()));
-    }
-  }
-
-  void _selectTrack(int index) async {
+  void _goToTrack(int index) {
     setState(() {
       _selectedTrack = index;
       _trackProgress = 0.0;
@@ -383,9 +367,43 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     });
     if (_isPlaying) {
       _startTrackProgress();
-      await _playWithDelay();
+      _playWithDelay();
     } else {
-      await _audioPlayer.stop();
+      _audioPlayer.stop();
+    }
+  }
+
+  int _pickNext() {
+    if (_isShuffle && _tracks.length > 1) {
+      final rnd = Random();
+      var n = _selectedTrack;
+      while (n == _selectedTrack) {
+        n = rnd.nextInt(_tracks.length);
+      }
+      return n;
+    }
+    return (_selectedTrack + 1) % _tracks.length;
+  }
+
+  void _toggleLoop() {
+    setState(() {
+      _isLooping = !_isLooping;
+    });
+  }
+
+  void _nextTrack() => _goToTrack(_pickNext());
+
+  void _prevTrack() =>
+      _goToTrack((_selectedTrack - 1 + _tracks.length) % _tracks.length);
+
+  void _selectTrack(int index) => _goToTrack(index);
+
+  void _seekTrack(double value) async {
+    setState(() {
+      _trackProgress = value.clamp(0.0, 1.0);
+    });
+    if (_audioDuration != null) {
+      await _audioPlayer.seek(Duration(milliseconds: (_audioDuration!.inMilliseconds * value).toInt()));
     }
   }
 
@@ -996,6 +1014,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   onPrevTrack: _prevTrack,
                   onSeek: _seekTrack,
                   onSelectTrack: _selectTrack,
+                  isLooping: _isLooping,
+                  onToggleLoop: _toggleLoop,
+                  isRepeatPlaylist: _isRepeatPlaylist,
+                  onToggleRepeatPlaylist: (v) =>
+                      setState(() => _isRepeatPlaylist = v),
+                  isShuffle: _isShuffle,
+                  onToggleShuffle: (v) => setState(() => _isShuffle = v),
                 ),
               );
             },
