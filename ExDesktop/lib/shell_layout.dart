@@ -22,6 +22,12 @@ class ShellLayout {
   /// Breathing room between a flyout and the dock.
   static const double dockGap = 8;
 
+  /// The waybar: 700 px wide, 60 px tall, centred at the top.
+  static const double waybarWidth = 700;
+  static const double waybarHeight = 60;
+
+  Rect4 get waybarRect => [width / 2 - waybarWidth / 2, 0, waybarWidth, waybarHeight];
+
   /// Left edge of the dock.
   double get dockLeft => width - dockMargin - dockWidth;
 
@@ -29,7 +35,7 @@ class ShellLayout {
   Rect4 get dockRect =>
       [dockLeft, dockMargin, dockWidth, height - dockMargin * 2];
 
-  // ---- the power menu (the apps button in the dock) ------------------------
+  // ---- the power menu ------------------------------------------------------
   Rect4 get menuButton => [width - 67, height - 72, 52, 52];
   Rect4 get menuRect => [width - 789, height - 570, 700, 550];
 
@@ -51,20 +57,17 @@ class ShellLayout {
   /// hanging in the corner next to it.
   Rect4 get volumeButton => [width - 76, 22, 40, 40];
 
-  // ---- virtual desktops (the four dots in the middle of the dock) ---------
+  // ---- desktops (the vertical dots in the middle of the dock) --------------
   Rect4 get desktopsButton => [width - 76, height / 2 - 26, 52, 52];
   Rect4 get desktopsRect =>
-      [dockLeft - dockGap - 320, height / 2 - 125, 320, 250];
+      [dockLeft - dockGap - 340, height / 2 - 135, 340, 270];
 
-  // ---- launcher (the nine dots at the bottom of the dock) ------------------
+  // ---- launcher (the apps button at the bottom of the dock) ----------------
   Rect4 get launcherButton => [width - 76, height - 72, 52, 52];
 
   /// A compact landscape rectangle: three columns of icons, not a tall
   /// The app grid plus the action strip under it.
   Rect4 get launcherRect => [width / 2 - 160, height / 2 - 148, 320, 296];
-
-  // ---- the settings window -------------------------------------------------
-  Rect4 get settingsRect => [width / 2 - 425, height / 2 - 260, 850, 520];
 
   /// Every panel that floats over the desktop.
   Map<String, Rect4> get panels => {
@@ -74,7 +77,6 @@ class ShellLayout {
         'volume': volumeRect,
         'launcher': launcherRect,
         'desktops': desktopsRect,
-        'settings': settingsRect,
       };
 
   /// True when two `[left, top, w, h]` rectangles share pixels.

@@ -1,15 +1,19 @@
-// Widget tests for the shell: surface coordination, tap-away, the in-app
-// workspaces and the launcher strip.
+// Widget tests for the shell: the in-app windows, the launcher, the waybar,
+// the workspaces, the panels and the player path.
 //
-// The radios and the sound run on recorders, so a test never spawns
-// PowerShell and never touches the machine's volume. The workspace tests use
-// the real controller — it lives entirely inside the app.
+// The radios, the sound and the audio engine run on recorders, so a test never
+// spawns PowerShell, mutes the speakers or plays a track. The workspace and
+// window managers are the real ones — they live entirely inside the app.
 //
 // Run with: flutter test
 
+import 'dart:async';
+
 import 'package:exp_desktop/main.dart';
+import 'package:exp_desktop/playback/player_controller.dart';
 import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/sound_control.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -17,60 +21,199 @@ void main() {
   testWidgets('the shell draws on startup', (tester) async {
     await _pumpShell(tester);
 
+    expect(find.byKey(const ValueKey('waybar')), findsOneWidget);
     expect(find.byKey(const ValueKey('apps-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('desktop-dots')), findsOneWidget);
+    expect(find.byKey(const ValueKey('mini-player')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('opening the settings window closes the launcher',
+  testWidgets('the waybar has no dead four-squares button', (tester) async {
+    await _pumpShell(tester);
+    expect(find.byIcon(Icons.widgets_outlined), findsNothing);
+  });
+
+  testWidgets('a launcher tile opens an in-app window and closes the launcher',
       (tester) async {
     await _pumpShell(tester);
 
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
+    expect(find.byKey(const ValueKey('launcher-app-calculator')), findsOneWidget);
     expect(find.text('Calculator'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
+    await tester.tap(find.byKey(const ValueKey('launcher-app-calculator')));
     await _settle(tester);
 
-    expect(find.text('Calculator'), findsNothing);
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
+    // The launcher is gone, the calculator window is on the desktop.
+    expect(find.byKey(const ValueKey('launcher-app-calculator')), findsNothing);
+    expect(find.byKey(const ValueKey('calc-display')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dock-app-calculator')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('opening the launcher minimises the settings window',
+  testWidgets('the window arrives with an animation, not instantly',
       (tester) async {
     await _pumpShell(tester);
-
-    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
-    await _settle(tester);
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
-
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('launcher-app-calculator')));
 
-    expect(find.text('Wi-Fi & internet'), findsNothing);
-    expect(find.text('Calculator'), findsOneWidget);
+    // Two frames in, the window exists but is still transparent and shifted.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    final opacity = tester.widget<Opacity>(
+      find.descendant(
+        of: find.byKey(const ValueKey('window-1')),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(opacity.opacity, lessThan(1.0));
 
-    // The dock keeps a way back to the window.
-    await tester.tap(find.byKey(const ValueKey('dock-settings')));
     await _settle(tester);
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
+    final settled = tester.widget<Opacity>(
+      find.descendant(
+        of: find.byKey(const ValueKey('window-1')),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(settled.opacity, 1.0);
   });
 
-  testWidgets('the sound flyout leaves the settings window alone',
+  testWidgets('the calculator buttons really calculate', (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
+
+    await tester.tap(find.text('7'));
+    await tester.tap(find.text('＋'));
+    await tester.tap(find.text('5'));
+    await tester.tap(find.text('='));
+    await tester.pump();
+
+    expect(find.text('12'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the close button removes the window after its exit animation',
       (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
+
+    await tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('window-1')),
+      matching: find.byKey(const ValueKey('window-close')),
+    ));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('calc-display')), findsNothing);
+    expect(find.byKey(const ValueKey('dock-app-calculator')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('minimize hides the window and the dock brings it back',
+      (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'tasks');
+
+    await tester.tap(find.byKey(const ValueKey('window-minimize')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('tasks-input')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('dock-app-tasks')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('tasks-input')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a window can be dragged by its title bar', (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
+
+    final before = tester.getTopLeft(find.byKey(const ValueKey('window-1')));
+    await tester.drag(find.text('Calculator'), const Offset(120, 70));
+    // Let the double-tap recogniser's timer expire before the test ends.
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final after = tester.getTopLeft(find.byKey(const ValueKey('window-1')));
+    // The pan recogniser eats ~20 px of slop before it starts moving.
+    expect(after.dx, greaterThan(before.dx + 80));
+    expect(after.dy, greaterThan(before.dy + 30));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a window can be resized from the corner', (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'tasks');
+
+    final before = tester.getSize(find.byKey(const ValueKey('window-1')));
+    await tester.drag(
+      find.byKey(const ValueKey('window-resize')),
+      const Offset(90, 50),
+    );
+    await tester.pump();
+
+    final after = tester.getSize(find.byKey(const ValueKey('window-1')));
+    expect(after.width, greaterThan(before.width + 70));
+    expect(after.height, greaterThan(before.height + 30));
+  });
+
+  testWidgets('double-clicking the title bar maximizes and restores',
+      (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'tasks');
+
+    final before = tester.getSize(find.byKey(const ValueKey('window-1')));
+    await tester.tap(find.text('Tasks'));
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(find.text('Tasks'));
+    await _settle(tester, frames: 60);
+
+    final maximized = tester.getSize(find.byKey(const ValueKey('window-1')));
+    expect(maximized.width, greaterThan(before.width + 200));
+    expect(maximized.width, 1483);
+
+    await tester.tap(find.text('Tasks'));
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(find.text('Tasks'));
+    await _settle(tester, frames: 60);
+
+    final restored = tester.getSize(find.byKey(const ValueKey('window-1')));
+    expect(restored.width, before.width);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the desktop does not close an app window', (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
+
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('calc-display')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the settings window opens inside the shell', (tester) async {
     await _pumpShell(tester);
 
     await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
     await _settle(tester);
+
+    expect(find.byKey(const ValueKey('settings-row-wifi')), findsOneWidget);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('dock-settings')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the sound flyout stays open next to a window', (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'tasks');
 
     await tester.tap(find.byKey(const ValueKey('topbar-volume')));
     await _settle(tester);
 
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
-    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('volume-flyout')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tasks-input')), findsOneWidget);
   });
 
   testWidgets('tapping the desktop closes the sound flyout', (tester) async {
@@ -82,129 +225,121 @@ void main() {
 
     await tester.tapAt(const Offset(240, 700));
     await _settle(tester);
-
     expect(find.byKey(const ValueKey('volume-flyout')), findsNothing);
-    expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tapping the desktop closes the launcher', (tester) async {
-    await _pumpShell(tester);
-
-    await tester.tap(find.byKey(const ValueKey('apps-button')));
-    await _settle(tester);
-    expect(find.text('Calculator'), findsOneWidget);
-
-    await tester.tapAt(const Offset(240, 700));
-    await _settle(tester);
-
-    expect(find.text('Calculator'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('tapping the desktop leaves the settings window open',
+  testWidgets('the workspace panel stays open while desktops are added',
       (tester) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
-    await _settle(tester);
-
-    await tester.tapAt(const Offset(240, 860));
-    await _settle(tester);
-
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the launcher panel carries the action strip', (tester) async {
-    await _pumpShell(tester);
-
-    await tester.tap(find.byKey(const ValueKey('apps-button')));
-    await _settle(tester);
-
-    expect(find.text('Calculator'), findsOneWidget);
-    expect(find.byKey(const ValueKey('launcher-settings')), findsOneWidget);
-    expect(find.byKey(const ValueKey('launcher-power')), findsOneWidget);
-    expect(find.byKey(const ValueKey('launcher-terminal')), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
-    expect(find.text('Power'), findsOneWidget);
-    expect(find.text('Terminal'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the strip opens the built-in settings', (tester) async {
-    await _pumpShell(tester);
-
-    await tester.tap(find.byKey(const ValueKey('apps-button')));
-    await _settle(tester);
-    await tester.tap(find.byKey(const ValueKey('launcher-settings')));
-    await _settle(tester);
-
-    // The shell's own window, on its landing pane.
-    expect(find.text('Select an item'), findsOneWidget);
-    expect(find.text('Calculator'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the workspace pill opens the workspace panel', (tester) async {
-    await _pumpShell(tester);
-
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-
     expect(find.text('Desktop 1 of 1'), findsOneWidget);
-    expect(find.text('New'), findsOneWidget);
-    expect(find.text('Close'), findsOneWidget);
 
-    await tester.tap(find.text('New'));
-    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('workspace-new')));
+    await _settle(tester, frames: 60);
+    await tester.tap(find.byKey(const ValueKey('workspace-new')));
+    await _settle(tester, frames: 60);
 
-    // One dot per desktop, and the panel is gone.
-    expect(find.byKey(const ValueKey('workspace-dot-0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('workspace-dot-1')), findsOneWidget);
-    expect(find.text('New'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+    // The panel did not close; the chips grew.
+    expect(find.byKey(const ValueKey('workspace-new')), findsOneWidget);
+    expect(find.text('Desktop 3 of 3'), findsOneWidget);
+    expect(find.byKey(const ValueKey('workspace-chip-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('workspace-dot-2')), findsOneWidget);
 
-  testWidgets('a workspace chip selects that desktop', (tester) async {
-    await _pumpShell(tester);
-
-    // Create a second desktop from the panel.
-    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
-    await _settle(tester);
-    await tester.tap(find.text('New'));
-    await _settle(tester);
-
-    // The new desktop is active: its dot in the dock is the tall one.
-    expect(tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height,
-        greaterThan(
-            tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height));
-
-    // Jump back with the chip: the highlight follows.
-    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
-    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('workspace-close')));
+    await _settle(tester, frames: 60);
     expect(find.text('Desktop 2 of 2'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('workspace-chip-0')));
-    await _settle(tester);
-
-    expect(find.text('Desktop 1 of 2'), findsOneWidget);
-    expect(tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height,
-        greaterThan(
-            tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tapping the desktop closes the workspace panel', (tester) async {
+  testWidgets('a chip switches desktops and the windows follow', (tester) async {
     await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
-    expect(find.text('New'), findsOneWidget);
-
+    await tester.tap(find.byKey(const ValueKey('workspace-new')));
+    await _settle(tester, frames: 60);
     await tester.tapAt(const Offset(240, 700));
     await _settle(tester);
 
-    expect(find.text('New'), findsNothing);
+    // Desktop 2 has no windows of its own.
+    expect(find.byKey(const ValueKey('calc-display')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('workspace-chip-0')));
+    await _settle(tester);
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('calc-display')), findsOneWidget);
+  });
+
+  testWidgets('the mouse wheel over the dots scrolls desktops', (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('workspace-new')));
+    await _settle(tester, frames: 60);
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    // The new desktop is active: dot 1 is the tall one.
+    expect(
+      tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height,
+      greaterThan(
+        tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height,
+      ),
+    );
+
+    final centre = tester.getCenter(find.byKey(const ValueKey('desktop-dots')));
+    await tester.sendEventToBinding(PointerScrollEvent(
+      position: centre,
+      scrollDelta: const Offset(0, 20),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey('workspace-dot-0'))).height,
+      greaterThan(
+        tester.getSize(find.byKey(const ValueKey('workspace-dot-1'))).height,
+      ),
+    );
+  });
+
+  testWidgets('Tracks opens the Musics window', (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('mini-player')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('player-tracks')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('player-tracks')));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('player-tracks')), findsNothing);
+    expect(find.byKey(const ValueKey('musics-track-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('musics-play')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the Musics transport drives the player', (tester) async {
+    final audio = _FakeAudio();
+    await _pumpShell(tester, audio: audio);
+    await _openApp(tester, 'musics');
+
+    await tester.tap(find.byKey(const ValueKey('musics-play')));
+    await _settle(tester, frames: 40);
+    expect(find.byIcon(Icons.pause_rounded), findsWidgets);
+    expect(audio.calls, contains('play'));
+
+    await tester.tap(find.byKey(const ValueKey('musics-next')));
+    await _settle(tester, frames: 40);
+    expect(audio.calls.where((call) => call == 'play').length, greaterThan(1));
     expect(tester.takeException(), isNull);
   });
 
@@ -214,26 +349,25 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
-    expect(find.text('Calculator'), findsOneWidget);
+    expect(find.byKey(const ValueKey('launcher-app-files')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('desktop-dots')));
     await _settle(tester);
 
-    // Opening the workspaces closes the launcher: one surface at a time.
-    expect(find.text('Calculator'), findsNothing);
-    expect(find.text('New'), findsOneWidget);
+    expect(find.byKey(const ValueKey('launcher-app-files')), findsNothing);
+    expect(find.text('Desktop 1 of 1'), findsOneWidget);
   });
 
-  testWidgets('the buildings fit a 1366x768 screen', (tester) async {
+  testWidgets('the shell fits a 1366x768 screen', (tester) async {
     await _pumpShell(tester, size: const Size(1366, 768));
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
-    await tester.tap(find.byKey(const ValueKey('topbar-volume')));
+    await tester.tap(find.byKey(const ValueKey('launcher-app-musics')));
     await _settle(tester);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the buildings fit a 1024x768 screen', (tester) async {
+  testWidgets('the shell fits a 1024x768 screen', (tester) async {
     await _pumpShell(tester, size: const Size(1024, 768));
     await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
     await _settle(tester);
@@ -241,22 +375,37 @@ void main() {
   });
 }
 
+// ---- helpers -------------------------------------------------------------------
+
+Future<void> _openApp(WidgetTester tester, String appId) async {
+  await tester.tap(find.byKey(const ValueKey('apps-button')));
+  await _settle(tester);
+  await tester.tap(find.byKey(ValueKey('launcher-app-$appId')));
+  await _settle(tester);
+}
+
 Future<void> _pumpShell(
   WidgetTester tester, {
   Size size = const Size(1600, 900),
+  AudioEngine? audio,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(MaterialApp(
-    home: MyHomePage(radio: _FakeRadio(), sound: _FakeSound()),
+    home: MyHomePage(
+      radio: _FakeRadio(),
+      sound: _FakeSound(),
+      audio: audio ?? _FakeAudio(),
+    ),
   ));
   await _settle(tester);
 }
 
-/// The shell keeps a 1 s clock and a 12 s wallpaper timer running, so
-/// `pumpAndSettle` would never return. 90 frames is enough for the springs.
+/// The shell keeps a 1 s clock, a 12 s wallpaper timer and a spinning artwork
+/// ticker, so `pumpAndSettle` would never return. Fixed frames are enough for
+/// every spring.
 Future<void> _settle(WidgetTester tester, {int frames = 220}) async {
   for (var i = 0; i < frames; i++) {
     await tester.pump(const Duration(milliseconds: 16));
@@ -317,5 +466,56 @@ class _FakeRadio implements RadioSource {
     );
     _states[kind] = next;
     return RadioActionResult(ok: true, status: next, message: 'ok');
+  }
+}
+
+/// The audio backend without audio: records what the player asked for.
+class _FakeAudio implements AudioEngine {
+  final StreamController<Duration> _positions =
+      StreamController<Duration>.broadcast();
+  final StreamController<Duration> _durations =
+      StreamController<Duration>.broadcast();
+  final StreamController<void> _completions = StreamController<void>.broadcast();
+
+  final List<String> calls = [];
+
+  @override
+  Future<void> playAsset(String asset) async {
+    calls.add('play');
+    _durations.add(const Duration(seconds: 120));
+  }
+
+  @override
+  Future<void> pause() async => calls.add('pause');
+
+  @override
+  Future<void> resume() async => calls.add('resume');
+
+  @override
+  Future<void> stop() async => calls.add('stop');
+
+  @override
+  Future<void> seek(Duration position) async => calls.add('seek');
+
+  @override
+  Future<void> setVolume(double volume) async {}
+
+  @override
+  Future<Duration?> position() async => Duration.zero;
+
+  @override
+  Stream<Duration> get onPosition => _positions.stream;
+
+  @override
+  Stream<Duration> get onDuration => _durations.stream;
+
+  @override
+  Stream<void> get onComplete => _completions.stream;
+
+  @override
+  Future<void> dispose() async {
+    await _positions.close();
+    await _durations.close();
+    await _completions.close();
   }
 }

@@ -1,14 +1,15 @@
-// Widget tests for the settings window.
+// Widget tests for the settings *content* (the window chrome is ShellWindow's
+// job and is tested separately).
 //
-// They answer the question the mock suites cannot: does the window actually
-// build at a real size, do the live panes show the state they are handed, and
-// do the switches reach the backend? The backends are recorders, so no test
-// touch the machine's radios or mutes the speakers of whoever runs it.
+// They answer what the mock suites cannot: does the pane build at a real size,
+// do the live controls show the state they are handed, and does a click reach
+// the backend? The backends are recorders, so no test touches the machine's
+// radios or mutes the speakers of whoever runs it.
 //
 // Run with: flutter test
 
+import 'package:exp_desktop/desktop/apps/settings_view.dart';
 import 'package:exp_desktop/radio_control.dart';
-import 'package:exp_desktop/settings_app.dart';
 import 'package:exp_desktop/sound_control.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +19,6 @@ void main() {
     final sound = _FakeSound(volume: 0.4);
     await _open(tester, section: 'sound', sound: sound);
 
-    // The row in the list and the pane header both carry the title.
     expect(find.text('Sound settings'), findsNWidgets(2));
     expect(find.text('Level'), findsOneWidget);
     expect(find.text('40%'), findsOneWidget);
@@ -81,21 +81,23 @@ void main() {
     await _open(tester, section: 'bluetooth', radio: radio);
 
     expect(find.text('Disabled by system'), findsOneWidget);
-    expect(find.textContaining('The system will not switch the radio'), findsOneWidget);
+    expect(
+      find.textContaining('The system will not switch the radio'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('rows the shell does not own keep their Windows link',
       (tester) async {
     await _open(tester, section: 'appearance');
 
-    expect(find.text('Wallpaper'), findsWidgets);
     expect(find.text('Open in Windows Settings'), findsOneWidget);
     expect(find.textContaining('lives in Windows Settings'), findsOneWidget);
   });
 
   testWidgets('nothing selected shows the hint', (tester) async {
     await _open(tester);
-    expect(find.text('Select an item'), findsOneWidget);
+    expect(find.text('Select a section on the left'), findsOneWidget);
   });
 
   testWidgets('the list carries every section title', (tester) async {
@@ -103,40 +105,52 @@ void main() {
 
     for (final title in [
       'Input & output',
+      'Desktop',
       'Connected devices',
       'Network & connectivity',
     ]) {
       expect(find.text(title), findsOneWidget);
     }
 
-    // The rest of the list is below the fold: scrolling must reach it.
     await tester.scrollUntilVisible(
       find.text('Security & privacy'),
       120,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.descendant(
+        of: find.byKey(const ValueKey('settings-nav')),
+        matching: find.byType(Scrollable),
+      ),
     );
     expect(find.text('Security & privacy'), findsOneWidget);
   });
 
-  testWidgets('the top bar can retarget the window to another section',
-      (tester) async {
+  testWidgets('the navigator can retarget the pane', (tester) async {
     final sound = _FakeSound(volume: 0.5);
-    await _open(tester, section: 'sound', sound: sound);
+    final navigator = SettingsNavigator()..show('sound');
+    await _open(tester, section: 'sound', sound: sound, navigator: navigator);
     expect(find.text('Level'), findsOneWidget);
 
-    await tester.pumpWidget(_host(_settings(
-      section: 'wifi',
-      radio: _FakeRadio(),
-      sound: sound,
-    )));
+    navigator.show('wifi');
     await tester.pumpAndSettle();
 
     expect(find.text('Level'), findsNothing);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
   });
 
-  testWidgets('the window survives a small screen', (tester) async {
-    await _open(tester, section: 'sound', sound: _FakeSound(), size: const Size(1024, 700));
+  testWidgets('tapping a row opens that pane', (tester) async {
+    await _open(tester);
+    await tester.tap(find.byKey(const ValueKey('settings-row-display')));
+    await _settle(tester);
+
+    expect(find.text('Brightness'), findsOneWidget);
+  });
+
+  testWidgets('the content survives a small window', (tester) async {
+    await _open(
+      tester,
+      section: 'sound',
+      sound: _FakeSound(),
+      size: const Size(1024, 700),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -166,38 +180,85 @@ void main() {
     expect(applied, isEmpty);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('the wallpaper pane lists the wallpapers and applies one',
+      (tester) async {
+    final applied = <int>[];
+    await _open(
+      tester,
+      section: 'wallpaper',
+      wallpapers: const [
+        'assets/fons/fon1.jpg',
+        'assets/fons/fon2.jpg',
+        'assets/fons/fon3.jpg',
+      ],
+      activeWallpaper: 1,
+      onWallpaper: applied.add,
+    );
+
+    expect(find.textContaining('Each desktop keeps its own wallpaper'),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-wallpaper-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-wallpaper-2')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-wallpaper-2')));
+    await tester.pump();
+    expect(applied, [2]);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 // ---- helpers -------------------------------------------------------------------
 
 Widget _settings({
+  SettingsNavigator? navigator,
   String? section,
   RadioSource? radio,
   SoundSource? sound,
   DisplaySettings? display,
+  List<String> wallpapers = const [],
+  int activeWallpaper = 0,
+  ValueChanged<int>? onWallpaper,
 }) {
-  return SettingsApp(
-    initialPosition: Offset.zero,
-    onPositionChanged: (_) {},
-    onClose: () {},
-    onMinimize: () {},
-    initialSection: section,
+  final nav = navigator ?? SettingsNavigator();
+  if (navigator == null) nav.show(section);
+  return SettingsView(
+    navigator: nav,
     radio: radio,
     sound: sound,
-    display: display,
+    wallpapers: wallpapers,
+    activeWallpaper: activeWallpaper,
+    onWallpaper: onWallpaper,
+    display: display ??
+        DisplaySettings(
+          brightness: 0.7,
+          contrast: 0.7,
+          warmth: 0,
+          onBrightness: (_) {},
+          onContrast: (_) {},
+          onWarmth: (_) {},
+        ),
   );
 }
 
 Widget _host(Widget child) => MaterialApp(
-      home: Scaffold(body: Stack(children: [child])),
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(width: 920, height: 610, child: child),
+        ),
+      ),
     );
 
 Future<void> _open(
   WidgetTester tester, {
+  SettingsNavigator? navigator,
   String? section,
   RadioSource? radio,
   SoundSource? sound,
   DisplaySettings? display,
+  List<String> wallpapers = const [],
+  int activeWallpaper = 0,
+  ValueChanged<int>? onWallpaper,
   Size size = const Size(1280, 800),
 }) async {
   tester.view.physicalSize = size;
@@ -205,19 +266,22 @@ Future<void> _open(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(_host(_settings(
+    navigator: navigator,
     section: section,
     radio: radio,
     sound: sound,
     display: display,
+    wallpapers: wallpapers,
+    activeWallpaper: activeWallpaper,
+    onWallpaper: onWallpaper,
   )));
-  await _settleWindow(tester);
+  await _settle(tester);
 }
 
-/// Pumps a fixed number of frames instead of `pumpAndSettle`: the sound pane
-/// contains a WaveSlider whose ticker never stops, so "settle" would hang
-/// forever. 90 frames is enough for the window's opening spring to rest.
-Future<void> _settleWindow(WidgetTester tester) async {
-  for (var i = 0; i < 90; i++) {
+/// Fixed frames instead of `pumpAndSettle`: the WaveSlider's ticker never
+/// stops, so settling would hang.
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 30; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
 }

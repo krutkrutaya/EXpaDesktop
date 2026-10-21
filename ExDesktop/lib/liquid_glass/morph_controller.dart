@@ -5,7 +5,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/foundation.dart';
 
 import 'menu_morph.dart';
-import 'menu_spring.dart';
 
 /// Drives a [MenuMorphMotion] from a [Ticker]. A null frame means hidden.
 class MorphPanelController extends ChangeNotifier {
@@ -136,64 +135,6 @@ class MorphPanelController extends ChangeNotifier {
     _menuRadius = menuRadius;
     _motion?.retarget(button, menu, menuRadius);
   }
-
-  @override
-  void dispose() {
-    _ticker?.dispose();
-    _ticker = null;
-    super.dispose();
-  }
-}
-
-/// Drives the simpler [MenuFrame] scale spring (settings window).
-class MenuSpringPanelController extends ChangeNotifier {
-  final MenuSpringState _state = MenuSpringState(0);
-  MenuFrame _frame = const MenuFrame(
-      closing: false, stopped: true, scale: 0.001, opacity: 0);
-  Ticker? _ticker;
-  double _lastElapsed = 0;
-
-  MenuFrame get frame => _frame;
-  bool get isOpen => _state.target == 1;
-
-  void attach(TickerProvider vsync) {
-    _ticker?.dispose();
-    _ticker = vsync.createTicker(_onTick);
-  }
-
-  void _onTick(Duration elapsed) {
-    final seconds = elapsed.inMicroseconds / 1e6;
-    var dt = seconds - _lastElapsed;
-    _lastElapsed = seconds;
-    if (dt < 0) dt = 0;
-    if (dt <= 0) return;
-    _frame = stepMenuSpring(_state, dt * 1000);
-    if (_frame.stopped) {
-      _ticker?.stop();
-      _lastElapsed = 0;
-    }
-    notifyListeners();
-  }
-
-  void open() {
-    _state.target = 1;
-    _ensureRunning();
-    notifyListeners();
-  }
-
-  void close() {
-    _state.target = 0;
-    _ensureRunning();
-    notifyListeners();
-  }
-
-  void _ensureRunning() {
-    if (_ticker?.isActive ?? false) return;
-    _lastElapsed = 0;
-    _ticker?.start();
-  }
-
-  void toggle() => isOpen ? close() : open();
 
   @override
   void dispose() {

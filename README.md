@@ -19,11 +19,37 @@ Flutter · Rust · Glassmorphism · Liquid Glass
 ## ✨ What is this
 
 EXpaDesktop replaces the standard desktop with its own shell: giant
-clock, wallpaper slideshow, floating glass panels and a built-in music
-player — everything opens and closes **as a drop of liquid glass**
-that grows out of a button and dissolves back into it.
+clock, wallpaper slideshow, floating glass panels and **an in-app window
+manager** — every application opens *inside* EXpaDesktop, slides out of the
+right dock and lands as a glass window you can drag, resize, maximize,
+minimize and close. Nothing launches a second Windows window.
 
 ![EXpaDesktop](docs/screenshot.jpg)
+
+## 🪟 In-app windows
+
+| | |
+|---|---|
+| Calculator | a real four-function calculator with keyboard input |
+| Notepad | autosaves to `%APPDATA%\EXpaDesktop\notes.txt` |
+| Files | a directory browser with text and image preview inside the window |
+| Paint | a stroke canvas with colours, eraser, undo and PNG export to Pictures |
+| Snip | captures the shell itself, previews and saves the shot |
+| Tasks | a real to-do list, not Task Manager |
+| Browser | WebView2 composited into the window: address bar, back/forward, start page |
+| Musics | the player as a window: every track, transport, seek bar, beat cover |
+| Terminal | runs `cmd` lines in the window and prints the output |
+| Settings | the shell's own settings, now a window like every other app |
+
+- **Entrance**: a 300 ms spring — the window scales up, fades in and slides
+  out of the right dock; closing pulls it back the same way. Minimizing leaves
+  it on the dock's running-window strip.
+- **Per-desktop windows**: every in-app desktop keeps its own set of windows,
+  so switching desktops really switches the work, not just the wallpaper.
+- **Drag** by the title bar, **resize** from the corner, **double-click** the
+  title to maximize/restore. Dragging repaints only that window.
+- The dock shows one icon per open window: click to focus, click the focused
+  one to minimize.
 
 ## 🌊 Liquid Glass Animations
 
@@ -45,12 +71,12 @@ runs and 300 ms stress frames.
 ## 🎵 Music Player
 
 - A track fades in over ~250 ms instead of slamming the room at full level; **pause keeps the position**, play resumes exactly there
+- **The spinning artwork settles upright**: pausing no longer freezes the cover at a random angle — a damped spring turns it to the nearest full turn and stops there, smoothly
 - Covers come from the mp3 itself: the player reads the ID3v2 APIC frame, so a dropped file shows its own artwork with no config
 - **Wavy slider** in the Material Design style — the active track lives as a sine wave, surging while you drag
 - The thumb grows on hover and **stretches like a droplet** against the drag direction
-- 🟠 Loop the current track, repeat the playlist, shuffle order (the `•••` menu)
-- Buttons spring like Google Gemini ones: pressing stretches them into an oval, releasing snaps them back elastically
-- Track list — dark glass cards with smooth edge fade while scrolling
+- 🟠 Loop the current track, repeat the playlist, shuffle order
+- **Musics** (the Tracks pill) opens a full player window: the list of tracks and artists, previous / play / next, a timecode seek bar, and a cover that **breathes with the beat** instead of spinning
 
 ## ☀️ Display Control
 
@@ -67,10 +93,18 @@ All three sliders use the same wavy WaveSlider as the player.
 ## 🖥️ The Shell
 
 - A 145 px clock, wallpapers rotating every 12 seconds with a crossfade
-- Top panel with "glass" (BackdropFilter): apps, mini-player, bluetooth / volume / wi-fi
-- Right dock: the apps button (launcher) and a vertical column of workspace dots, one per desktop, the current one lit
-- Power menu behind the apps button (lock / sign out / restart / sleep / shutdown / settings)
-- Settings window: 7 sections, draggable by its title bar, minimizes into the dock, opens on a bouncy spring
+- **Waybar** (the top panel): brightness on the left, the mini player in the
+  middle (with the spinning cover and play/pause), Bluetooth / sound / Wi-Fi on
+  the right. The old four-squares decoration next to the player is gone.
+- Right dock: one icon per running window, **a vertical column of desktop dots**
+  (as many as there are desktops, the current one lit), and the apps button
+- **Scroll the mouse wheel over the dots** to flip through desktops; the dots
+  adapt their size so even nine desktops fit the pill
+- Power menu behind the apps button (lock / sign out / restart / sleep /
+  shutdown / settings)
+- The workspace panel keeps itself open while you add, close or switch
+  desktops — the buttons have real disabled states at the nine/one limit, so a
+  click never silently disappears
 
 ## 🎛️ Settings that actually switch things
 
@@ -96,20 +130,54 @@ the shell shows what the machine reports, including "device not found" and
 
 ### Command line
 
-`Ctrl+Alt+Space` opens a one-line command field. Type «включи вайфай»,
-«громкость 40», «заглуши звук», «открой настройки блютуза» — the phrase goes
-through the same sink as the buttons and the reply appears under the field.
-The phrase matcher and the assistant's system prompt live in
-[`PROMPTS.md`](PROMPTS.md).
+`Ctrl+Alt+Space` opens a one-line command field. Type `turn on wifi`,
+`volume 40`, `sound off`, `open bluetooth settings` — the phrase goes through
+the same sink as the buttons and the reply appears under the field. Russian
+phrasings («включи вайфай», «громкость 40») still work: the matcher is
+bilingual on purpose. The phrase matcher and the assistant's system prompt
+live in [`PROMPTS.md`](PROMPTS.md).
+
+`Ctrl+Tab` cycles the open windows; `Esc` closes the command field.
 
 ## 🧩 Structure
 
 ```
 ExDesktop/
 ├── lib/
-│   ├── main.dart                # shell: wallpapers, clock, panels, dock
-│   ├── player.dart              # player: transport, slider, track list
-│   ├── settings_app.dart        # spring-driven settings + live parameter panes
+│   ├── main.dart                # shell: wallpaper, waybar, panels, dock
+│   ├── player.dart              # player flyout (Tracks → Musics)
+│   ├── playback/                # 🎧 the player, as data
+│   │   ├── player_controller.dart#  audio, playlist, progress, the spin
+│   │   ├── spin.dart            #   artwork angle: spins, springs upright
+│   │   ├── beat.dart            #   the Musics cover's heartbeat
+│   │   ├── playlist.dart        #   next/previous/shuffle + time formatting
+│   │   └── track.dart           #   one track
+│   ├── desktop/                 # 🪟 in-app windows
+│   │   ├── app_catalog.dart     #   the ten apps, their ids and sizes
+│   │   ├── window_manager.dart  #   z-order, focus, minimize, drag, resize
+│   │   ├── shell_window.dart    #   the chrome + the entrance spring
+│   │   ├── desktop_surface.dart #   the Stack of windows
+│   │   ├── app_icons.dart
+│   │   └── apps/                #   the windows themselves
+│   │       ├── calculator_app.dart
+│   │       ├── notepad_app.dart
+│   │       ├── files_app.dart
+│   │       ├── paint_app.dart
+│   │       ├── snip_app.dart
+│   │       ├── tasks_app.dart
+│   │       ├── browser_app.dart #   WebView2 in a Flutter texture
+│   │       ├── musics_app.dart
+│   │       ├── settings_view.dart
+│   │       └── terminal_app.dart
+│   ├── apps/                    # pure models (no widgets), mock-tested
+│   │   ├── calculator_engine.dart
+│   │   ├── task_board.dart
+│   │   ├── notepad_store.dart
+│   │   ├── files_model.dart
+│   │   ├── paint_board.dart
+│   │   ├── terminal_session.dart
+│   │   └── browser_model.dart
+│   ├── ui/                      # glass controls + the waybar's mini player
 │   ├── sound_control.dart       # one owner of the master volume and mute
 │   ├── radio_control.dart       # Wi-Fi / Bluetooth state and switching
 │   ├── radio_script.dart        # the PowerShell bridge to Windows' radio API
@@ -123,30 +191,23 @@ ExDesktop/
 │   ├── id3_art.dart             # title / artist / cover from the mp3 tags
 │   ├── track_art.dart           # one artwork rule: cover, asset, placeholder
 │   ├── liquid_glass/            # 🔬 physics & widgets
-│   │   ├── menu_morph.dart      #   capsule→drop→panel morph
-│   │   ├── menu_spring.dart     #   bouncy scale (settings)
-│   │   ├── spring.dart          #   damped spring
-│   │   ├── morph_controller.dart#   tickers, open/close/reverse
-│   │   ├── morph_glass.dart     #   rendering: lens, glass, blur
-│   │   ├── wave_slider.dart     #   wavy Material slider
-│   │   └── stretch_icon_button.dart  # Gemini-style buttons
-│   └── rust/
-│       ├── src/lib.rs           # DDC/CI + gamma ramps (Rust)
-│       └── brightness.dll       # prebuilt native library
-├── assets/
-│   ├── fons/                    # 8 wallpapers
-│   ├── music/                   # tracks and cover art
-│   └── icons/
+│   └── rust/                    # DDC/CI + gamma ramps (Rust)
+├── assets/                      # fons, music, icons
 └── test/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
-    ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    ├── shell_check.dart              # 🧪 311 layout/policy/ID3/workspace checks
-    ├── system_mock_check.dart        # 🧪 415 system + assistant mock tests
+    ├── desktop_check.dart            # 🧪 117 window manager + catalog checks
+    ├── apps_check.dart               # 🧪 150 app-model checks
+    ├── playback_check.dart           # 🧪 54 spin/beat/playlist checks
+    ├── shell_check.dart              # 🧪 335 layout/policy/ID3/workspace checks
+    ├── system_mock_check.dart        # 🧪 476 system + assistant checks
+    ├── liquid_glass_mock_check.dart  # 🧪 53 physics checks
     └── widget/
-        ├── settings_app_test.dart    # 🧪 11 widget tests: panes, switches
-        ├── shell_test.dart           # 🧪 15 widget tests: surfaces, tap-away, workspaces
-        └── track_art_test.dart       # 🧪 4 widget tests: artwork fallbacks
+        ├── shell_test.dart           # 🧪 22 shell widget tests
+        ├── settings_view_test.dart   # 🧪 13 settings widget tests
+        ├── player_controller_test.dart # 🧪 10 player tests
+        ├── apps_extra_test.dart      # 🧪 4 browser/notepad tests
+        └── track_art_test.dart       # 🧪 4 artwork tests
 ```
 
 `windows/` holds the generated runner (CMake + C++ window host).
@@ -207,9 +268,19 @@ flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desk
 ```
 
 The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
-`audioplayers_windows_plugin.dll` and `data\flutter_assets\`.
+`audioplayers_windows_plugin.dll`, `flutter_inappwebview_windows_plugin.dll`,
+`WebView2Loader.dll` and `data\flutter_assets\`.
 The Windows runner lives in `ExDesktop/windows/` (generated with
 `flutter create --platforms=windows .` and committed, so a fresh clone builds).
+
+The Browser window needs the **Microsoft Edge WebView2 runtime**, which ships
+with Windows 10/11 and with Edge; if it is missing the window shows its start
+page and says so instead of breaking.
+
+`windows/CMakeLists.txt` defines
+`_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` for the plugin
+subdirectories: C++/WinRT still includes `<experimental/coroutine>`, and MSVC
+14.51 turned that into a hard error. It is Microsoft's documented escape hatch.
 
 **Nothing binary is committed.** The DDC/CI brightness controller is a Rust
 library you build once (needs a Rust toolchain):
@@ -226,18 +297,22 @@ copies the DLL next to the exe when it is there, and skips it otherwise.
 
 ## 🧪 Tests
 
-Widget tests run under `flutter test`; the system, shell and physics suites are
-plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
-prints a single total — **840 checks**, plus **30 widget tests**.
+Widget tests run under `flutter test`; the window manager, app models, player
+math, system layer and physics suites are plain Dart scripts (no Flutter
+needed). `mock_all.dart` runs all of them and prints a single total —
+**1185 checks**, plus **53 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 30 widget tests
+flutter test                                 # 53 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 840 mock checks
-dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
-dart run test/system_mock_check.dart         # system + assistant, 415 checks
-dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 311 checks
+dart run test/mock_all.dart                  # 1185 mock checks
+dart run test/desktop_check.dart             # windows: 117 checks
+dart run test/apps_check.dart                # app models: 150 checks
+dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
+dart run test/liquid_glass_mock_check.dart   # physics only: 53 checks
+dart run test/system_mock_check.dart         # system + assistant: 476 checks
+dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 335 checks
 ```
 
 ```

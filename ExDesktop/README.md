@@ -1,7 +1,8 @@
 # ExDesktop (Flutter app)
 
-The Windows desktop shell itself: wallpapers, clock, liquid-glass panels, the
-music player, the shell's own settings with live Wi-Fi/Bluetooth/sound
+The Windows desktop shell itself: wallpapers, clock, liquid-glass panels, an
+in-app window manager (every app opens inside the shell), the player with the
+Musics window, the shell's own settings with live Wi-Fi/Bluetooth/sound
 controls, and the Ctrl+Alt+Space command line.
 
 Everything about the project — what it is, how the liquid-glass physics work,
@@ -13,8 +14,8 @@ how the system layer talks to Windows, and what the tests cover — lives in the
 ```powershell
 flutter pub get
 flutter analyze            # should print: No issues found!
-flutter test               # 10 widget tests
-dart run test/mock_all.dart   # 465 mock checks (plain Dart, no Flutter needed)
+flutter test               # 53 widget tests
+dart run test/mock_all.dart   # 1185 mock checks (plain Dart, no Flutter needed)
 
 flutter run -d windows     # debug, hot reload
 flutter build windows --release

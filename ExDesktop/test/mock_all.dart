@@ -8,12 +8,18 @@
 // Standalone script: bare print is its logging.
 // ignore_for_file: avoid_print
 
+import 'apps_check.dart' as apps;
+import 'desktop_check.dart' as desktop;
 import 'liquid_glass_mock_check.dart' as physics;
+import 'playback_check.dart' as playback;
 import 'shell_check.dart' as shell;
 import 'system_mock_check.dart' as system;
 import 'mock_harness.dart';
 
 Future<void> main() async {
+  desktop.runDesktopChecks();
+  playback.runPlaybackChecks();
+  await apps.runAppsChecks();
   physics.runPhysicsChecks();
   shell.runShellChecks();
   await system.runSystemChecks();

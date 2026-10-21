@@ -55,6 +55,14 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+#
+# flutter_inappwebview_windows builds on C++/WinRT, whose headers still use
+# <experimental/coroutine>. MSVC 14.51 turns that into a hard error; the macro
+# below is Microsoft's documented escape hatch until the plugin moves to the
+# standard <coroutine>. It has to be defined for the plugin targets too, hence
+# add_compile_definitions (a directory property inherited by the plugin
+# subdirectories added right after this) instead of a per-target definition.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 include(flutter/generated_plugins.cmake)
 
 

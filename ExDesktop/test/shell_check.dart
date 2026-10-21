@@ -94,15 +94,22 @@ void testLayoutNumbers() {
       layout.height / 2,
     );
 
-    // The three centred surfaces are really centred.
+    // The waybar is a real surface now: 60 px tall, centred, clear of the dock.
     checkClose(
-      '$label: launcher is horizontally centred',
-      layout.launcherRect[0] + layout.launcherRect[2] / 2,
+      '$label: the waybar is horizontally centred',
+      layout.waybarRect[0] + layout.waybarRect[2] / 2,
       layout.width / 2,
     );
+    checkEquals('$label: the waybar is 60 tall',
+        layout.waybarRect[3], ShellLayout.waybarHeight);
+    check('$label: the waybar sits at the top', layout.waybarRect[1] == 0);
+    check('$label: the waybar keeps clear of the dock',
+        !ShellLayout.overlaps(layout.waybarRect, layout.dockRect));
+    check('$label: the desktops panel has room for nine chips',
+        layout.desktopsRect[2] >= 26 * 9 + 4 * 8 + 22);
     checkClose(
-      '$label: settings window is horizontally centred',
-      layout.settingsRect[0] + layout.settingsRect[2] / 2,
+      '$label: the launcher is horizontally centred',
+      layout.launcherRect[0] + layout.launcherRect[2] / 2,
       layout.width / 2,
     );
     checkClose(
@@ -126,14 +133,14 @@ void testLayoutNumbers() {
   check('overlap ignores far apart rectangles',
       !ShellLayout.overlaps([0, 0, 10, 10], [20, 20, 10, 10]));
 
-  // A 800 px window cannot hold the 850 px settings window; it must at least
-  // stay centred instead of drifting into a corner.
+  // The smallest window the shell allows still fits its panels.
   const small = ShellLayout(800, 600);
-  checkClose(
-    '800x600: the settings window stays centred',
-    small.settingsRect[0] + small.settingsRect[2] / 2,
-    small.width / 2,
-  );
+  check('800x600: the launcher stays on screen',
+      small.fitsOnScreen(small.launcherRect));
+  check('800x600: the desktops panel stays on screen',
+      small.fitsOnScreen(small.desktopsRect));
+  check('800x600: the player stays on screen',
+      small.fitsOnScreen(small.playerRect));
 }
 
 // ---- which surface may share the screen ----------------------------------------
@@ -141,59 +148,61 @@ void testLayoutNumbers() {
 void testPanelPolicy() {
   section('[panel policy]');
 
-  // Opening the settings window clears the middle of the screen.
-  final settings = PanelPolicy.plan(ShellPanel.settings);
-  check('settings closes the launcher', settings.toClose.contains(ShellPanel.launcher));
-  check('settings closes the power menu', settings.toClose.contains(ShellPanel.menu));
-  check('settings closes the brightness flyout',
-      settings.toClose.contains(ShellPanel.brightness));
-  check('settings closes the volume flyout',
-      settings.toClose.contains(ShellPanel.volume));
-  check('settings closes the player', settings.toClose.contains(ShellPanel.player));
-  check('settings does not close itself', !settings.toClose.contains(ShellPanel.settings));
-  check('settings is not minimised by itself', !settings.minimizeSettings);
+  // The settings window is an app window now, not a panel.
+  checkEquals('six floating surfaces', ShellPanel.values.length, 6);
+  check('settings is not a panel',
+      ShellPanel.values.every((panel) => panel.name != 'settings'));
+  checkEquals('two centred surfaces', PanelPolicy.centred.length, 2);
+  check('the launcher is centred', ShellPanel.launcher.isCentred);
+  check('the power menu is centred', ShellPanel.menu.isCentred);
+  check('the player is a flyout', !ShellPanel.player.isCentred);
+  check('the desktops panel is a flyout', !ShellPanel.desktops.isCentred);
 
-  // Opening the launcher pushes the settings window into the dock.
+  // Opening the launcher clears the middle and the top edge.
   final launcher = PanelPolicy.plan(ShellPanel.launcher);
-  check('launcher minimises the settings window', launcher.minimizeSettings);
-  check('launcher closes the power menu', launcher.toClose.contains(ShellPanel.menu));
-  check('launcher closes the player', launcher.toClose.contains(ShellPanel.player));
+  check('launcher closes the power menu',
+      launcher.toClose.contains(ShellPanel.menu));
+  for (final flyout in PanelPolicy.flyouts) {
+    check('launcher closes ${flyout.name}',
+        launcher.toClose.contains(flyout));
+  }
+  check('launcher does not close itself',
+      !launcher.toClose.contains(ShellPanel.launcher));
 
   // The power menu behaves like the launcher.
-  check('menu minimises the settings window',
-      PanelPolicy.plan(ShellPanel.menu).minimizeSettings);
+  final menu = PanelPolicy.plan(ShellPanel.menu);
+  check('menu closes the launcher', menu.toClose.contains(ShellPanel.launcher));
+  check('menu closes the player', menu.toClose.contains(ShellPanel.player));
 
-  // A flyout may hover next to the settings window.
-  final volume = PanelPolicy.plan(ShellPanel.volume);
-  check('volume does not touch the settings window',
-      !volume.toClose.contains(ShellPanel.settings));
-  check('volume does not minimise the settings window', !volume.minimizeSettings);
-  check('volume closes the brightness flyout',
-      volume.toClose.contains(ShellPanel.brightness));
-  check('volume closes the player', volume.toClose.contains(ShellPanel.player));
-  check('volume closes the launcher', volume.toClose.contains(ShellPanel.launcher));
-  check('volume closes the power menu', volume.toClose.contains(ShellPanel.menu));
-
-  // A flyout must never open on top of a centred surface.
-  for (final flyout in [ShellPanel.brightness, ShellPanel.volume, ShellPanel.player, ShellPanel.desktops]) {
+  // A flyout closes the other flyouts and both centred surfaces.
+  for (final flyout in PanelPolicy.flyouts) {
     final plan = PanelPolicy.plan(flyout);
-    check(': closes the launcher', plan.toClose.contains(ShellPanel.launcher));
-    check(': closes the power menu', plan.toClose.contains(ShellPanel.menu));
-    check(': keeps the settings window', !plan.toClose.contains(ShellPanel.settings));
+    check('${flyout.name}: closes the launcher',
+        plan.toClose.contains(ShellPanel.launcher));
+    check('${flyout.name}: closes the power menu',
+        plan.toClose.contains(ShellPanel.menu));
+    for (final other in PanelPolicy.flyouts) {
+      if (other == flyout) continue;
+      check('${flyout.name}: closes ${other.name}',
+          plan.toClose.contains(other));
+    }
   }
 
-  // No panel ever asks to close itself.
+  // No panel ever asks to close itself, and no plan repeats a panel.
   for (final panel in ShellPanel.values) {
     final plan = PanelPolicy.plan(panel);
-    check('${panel.name}: does not close itself', !plan.toClose.contains(panel));
+    check('${panel.name}: does not close itself',
+        !plan.toClose.contains(panel));
     check('${panel.name}: closes only once',
         plan.toClose.toSet().length == plan.toClose.length);
+    check('${panel.name}: has work to do', plan.toClose.isNotEmpty);
   }
 
-  check('every panel is reachable by the policy',
-      ShellPanel.values.every((p) => PanelPolicy.plan(p).toClose.isNotEmpty));
+  // Opening a panel twice must still be idempotent: the same plan either time.
+  check('the plan is deterministic',
+      PanelPolicy.plan(ShellPanel.volume).toClose.toString() ==
+          PanelPolicy.plan(ShellPanel.volume).toClose.toString());
 }
-
 // ---- ID3 -----------------------------------------------------------------------
 
 /// Builds an ID3v2.3 tag for the tests.
@@ -368,6 +377,19 @@ void testWorkspaces() {
   w.cycleBackground();
   check('the slideshow changes the active wallpaper',
       w.active.backgroundIndex != before);
+
+  var beforeSet = notified;
+  w.setBackground(3);
+  checkEquals('setBackground changes the wallpaper',
+      w.active.backgroundIndex, 3);
+  checkEquals('setBackground notifies', notified, beforeSet + 1);
+  w.setBackground(3);
+  checkEquals('setting the same wallpaper is quiet', notified, beforeSet + 1);
+  w.setBackground(99);
+  checkEquals('an out-of-range wallpaper is ignored',
+      w.active.backgroundIndex, 3);
+  w.setBackground(-1);
+  checkEquals('a negative wallpaper is ignored', w.active.backgroundIndex, 3);
 
   // Fill the dock up to the limit.
   while (w.canCreate) {

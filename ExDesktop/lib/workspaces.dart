@@ -89,6 +89,14 @@ class WorkspaceController {
 
   void previous() => select((_active - 1 + _items.length) % _items.length);
 
+  /// Sets the wallpaper of the current desktop (the settings window).
+  void setBackground(int index) {
+    if (index < 0 || index >= backgroundCount) return;
+    if (active.backgroundIndex == index) return;
+    active.backgroundIndex = index;
+    _notify();
+  }
+
   /// Rotates the wallpaper of the current desktop, for the slideshow timer.
   void cycleBackground() {
     final index = (active.backgroundIndex + 1) % backgroundCount;
