@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert' show jsonDecode;
 import 'dart:ffi';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'player.dart';
 import 'settings_app.dart';
@@ -99,7 +101,32 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool get _isBrightnessOpen => _brightnessMorph?.active ?? false;
   bool get _isPlayerOpen => _playerMorph?.active ?? false;
 
-  final List<Map<String, String>> _tracks = [
+  // Hand-written metadata for files we know; every other .mp3 found in
+  // assets/music is named from its filename automatically, so a new song
+  // only needs to be dropped into the folder.
+  static const Map<String, Map<String, String>> _trackMetaOverride = {
+    'morgenshtern-ice.mp3': {
+      'title': 'ICE',
+      'artist': 'Morgenshtern',
+      'avatar': 'assets/music/ava-track-1.jpg',
+    },
+    'b5607d8a7d89812.mp3': {
+      'title': 'Track Test',
+      'artist': 'Неизвестно',
+      'avatar': '',
+    },
+    'monetochka-kazhdyjj-raz.mp3': {
+      'title': 'Каждый раз',
+      'artist': 'Монеточка',
+      'avatar': 'assets/music/ava-track-3.jpg',
+    },
+  };
+
+  // Seeded with the known tracks so the player is usable from the very
+  // first frame; the folder scan replaces this list as soon as it lands.
+  // The maps stay mutable: playing a track writes the real duration into
+  // its entry.
+  List<Map<String, String>> _tracks = [
     {
       'title': 'ICE',
       'artist': 'Morgenshtern',
@@ -121,16 +148,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       'avatar': 'assets/music/ava-track-3.jpg',
       'file': 'monetochka-kazhdyjj-raz.mp3',
     },
-    ...List.generate(
-      12,
-      (i) => {
-        'title': 'Test ${i + 4}',
-        'artist': 'Test Artist ${i + 4}',
-        'duration': '2:00',
-        'avatar': '',
-        'file': '',
-      },
-    ),
   ];
 
   DynamicLibrary? _brightnessLib;
@@ -174,6 +191,85 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         });
       }
     });
+
+    unawaited(_scanMusicAssets());
+  }
+
+  // The asset folder cannot be listed at runtime directly, but Flutter's
+  // asset manifest lists every bundled file. Newer Flutter ships it as a
+  // binary blob, older as JSON — both are handled.
+  static const String _musicPrefix = 'assets/music/';
+
+  Future<void> _scanMusicAssets() async {
+    final files = await _musicAssetFiles();
+    if (!mounted || files.isEmpty) return;
+    setState(() {
+      _tracks = [for (final file in files) _trackFromFile(file)];
+      if (_selectedTrack >= _tracks.length) _selectedTrack = 0;
+    });
+  }
+
+  Future<List<String>> _musicAssetFiles() async {
+    final files = <String>[];
+    try {
+      final manifest = await rootBundle.load('AssetManifest.bin');
+      final decoded =
+          const StandardMessageCodec().decodeMessage(manifest);
+      if (decoded is Map) {
+        files.addAll(_filterMusicFiles(decoded.keys.whereType<String>()));
+      }
+    } catch (_) {
+      try {
+        final json = await rootBundle.loadString('AssetManifest.json');
+        final decoded = jsonDecode(json) as Map<String, dynamic>;
+        files.addAll(_filterMusicFiles(decoded.keys.whereType<String>()));
+      } catch (_) {}
+    }
+    // The manifest always ships in Flutter builds; the fallback keeps the
+    // player alive with the already-known files even if reading it fails.
+    if (files.isEmpty) {
+      return _tracks
+          .map((track) => track['file'] ?? '')
+          .where((file) => file.isNotEmpty)
+          .toSet()
+          .toList();
+    }
+    return files;
+  }
+
+  List<String> _filterMusicFiles(Iterable<String> keys) {
+    return keys
+        .map((key) => key.replaceAll('\\', '/'))
+        .where((path) => path.startsWith(_musicPrefix) && path.endsWith('.mp3'))
+        .map((path) => path.substring(_musicPrefix.length))
+        .where((file) => file.isNotEmpty && !file.contains('/'))
+        .toSet()
+        .toList()
+      ..sort();
+  }
+
+  Map<String, String> _trackFromFile(String file) {
+    final known = _trackMetaOverride[file];
+    return {
+      'title': known?['title'] ?? _autoTitle(file),
+      'artist': known?['artist'] ?? 'Unknown artist',
+      'duration': '',
+      'avatar': known?['avatar'] ?? '',
+      'file': file,
+    };
+  }
+
+  String _autoTitle(String file) {
+    final words = file
+        .split('.')
+        .first
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ')
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .map((word) => word[0].toUpperCase() + word.substring(1).toLowerCase());
+    final title = words.join(' ');
+    return title.isEmpty ? file : title;
   }
 
   @override
