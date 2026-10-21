@@ -1,6 +1,8 @@
 // Damped spring physics, ported 1:1 from liquid-glass (src/animation/spring.ts).
 // Semi-implicit Euler, sub-stepped so high stiffness stays stable.
 
+import 'dart:math' as math;
+
 /// The longest frame the physics follows in full (covers a 20fps cap).
 const double kMaxStepS = 0.066;
 const double _subStepS = 0.002;
@@ -45,7 +47,7 @@ class Spring {
     final mass = _mass > 1e-3 ? _mass : 1e-3;
     double remaining = dt;
     while (remaining > 1e-6) {
-      final h = math_min(remaining, _subStepS);
+      final h = math.min(remaining, _subStepS);
       final springForce = -_stiffness * (value - target);
       final dampingForce = -_damping * velocity;
       final acceleration = (springForce + dampingForce) / mass;
@@ -59,4 +61,4 @@ class Spring {
   }
 }
 
-double math_min(double a, double b) => a < b ? a : b;
+

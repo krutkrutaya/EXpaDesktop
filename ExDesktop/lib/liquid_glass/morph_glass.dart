@@ -15,6 +15,10 @@ class MorphGlass extends StatelessWidget {
   final double restWidth;
   final double restHeight;
 
+  /// Darkening laid over the whole glass rect. Panels that style their
+  /// halves themselves (the player) pass a transparent tint.
+  final Color tint;
+
   /// The panel content, laid out at rest size.
   final Widget child;
 
@@ -27,6 +31,7 @@ class MorphGlass extends StatelessWidget {
     required this.restWidth,
     required this.restHeight,
     required this.child,
+    this.tint = const Color(0x99000000),
     this.interactive = true,
   });
 
@@ -55,7 +60,7 @@ class MorphGlass extends StatelessWidget {
               ),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
+                  color: tint,
                   borderRadius: BorderRadius.circular(radius),
                   border: Border.all(
                     color: Colors.white.withValues(alpha: 0.15),

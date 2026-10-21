@@ -282,33 +282,35 @@ class _PlayerPanelState extends State<PlayerPanel> {
   }
 
   Widget _buildTransportRow() {
+    // Sized so the row (260 px) always fits the 277 px the left panel's
+    // interior offers — no right overflow, whatever the window width.
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         // Loop the current track.
         StretchIconButton(
           active: widget.isLooping,
-          size: 46,
+          size: 44,
           onTap: widget.onToggleLoop,
           child: Icon(
             Icons.repeat_rounded,
-            size: 25,
+            size: 24,
             color: widget.isLooping ? Colors.orange : Colors.white,
+          ),
+        ),
+        const SizedBox(width: 4),
+        StretchIconButton(
+          size: 48,
+          onTap: widget.onPrevTrack,
+          child: const Icon(
+            Icons.skip_previous_rounded,
+            size: 30,
+            color: Colors.white,
           ),
         ),
         const SizedBox(width: 6),
         StretchIconButton(
-          size: 50,
-          onTap: widget.onPrevTrack,
-          child: const Icon(
-            Icons.skip_previous_rounded,
-            size: 32,
-            color: Colors.white,
-          ),
-        ),
-        const SizedBox(width: 8),
-        StretchIconButton(
-          size: 60,
+          size: 56,
           onTap: widget.onTogglePlay,
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
@@ -324,29 +326,29 @@ class _PlayerPanelState extends State<PlayerPanel> {
                   : Icons.play_arrow_rounded,
               key: ValueKey<bool>(widget.isPlaying),
               color: Colors.white,
-              size: 44,
+              size: 42,
             ),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         StretchIconButton(
-          size: 50,
+          size: 48,
           onTap: widget.onNextTrack,
           child: const Icon(
             Icons.skip_next_rounded,
-            size: 32,
+            size: 30,
             color: Colors.white,
           ),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: 4),
         // Three dots: playlist options.
         StretchIconButton(
           key: _moreMenuKey,
-          size: 46,
+          size: 44,
           onTap: _showMoreMenu,
           child: const Icon(
             Icons.more_vert_rounded,
-            size: 25,
+            size: 24,
             color: Colors.white,
           ),
         ),

@@ -1,6 +1,10 @@
 // An icon button that squashes into an oval while held (the Google-Gemini
-// press stretch) and springs back elastically on release. `active` lights it
+// press stretch) and snaps back elastically on release. `active` lights it
 // up with a tinted halo and a small bounce when it turns on.
+//
+// Paint hygiene: the transforming subtree sits behind its own RepaintBoundary
+// so pressing one button never re-rasterizes the blurred panels behind it,
+// and the release uses a short snappy over-shoot instead of a long wobble.
 
 import 'package:flutter/material.dart';
 
@@ -28,13 +32,13 @@ class _StretchIconButtonState extends State<StretchIconButton>
     with SingleTickerProviderStateMixin {
   late final AnimationController _press = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 140),
-    reverseDuration: const Duration(milliseconds: 550),
+    duration: const Duration(milliseconds: 90),
+    reverseDuration: const Duration(milliseconds: 260),
   );
   late final CurvedAnimation _curve = CurvedAnimation(
     parent: _press,
     curve: Curves.easeOutCubic,
-    reverseCurve: Curves.elasticOut,
+    reverseCurve: Curves.easeOutBack,
   );
   bool _hovered = false;
 
@@ -64,48 +68,46 @@ class _StretchIconButtonState extends State<StretchIconButton>
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => _down(),
-        onTapUp: (_) => _up(),
-        onTapCancel: () => _press.reverse(),
-        child: AnimatedBuilder(
-          animation: _curve,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: widget.size,
-            height: widget.size,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: widget.active
-                  ? widget.activeColor.withValues(alpha: 0.16)
-                  : _hovered
-                      ? Colors.white.withValues(alpha: 0.12)
-                      : Colors.transparent,
-              border: widget.active
-                  ? Border.all(
-                      color: widget.activeColor.withValues(alpha: 0.5))
-                  : null,
-            ),
-            child: widget.child,
-          ),
-          builder: (context, child) {
-            final p = _curve.value;
-            return Transform(
+    return RepaintBoundary(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (_) => _down(),
+          onTapUp: (_) => _up(),
+          onTapCancel: _press.reverse,
+          child: AnimatedBuilder(
+            animation: _curve,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: widget.size,
+              height: widget.size,
               alignment: Alignment.center,
-              transform: Matrix4.diagonal3Values(
-                1.0 + 0.22 * p,
-                1.0 - 0.13 * p,
-                1.0,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.active
+                    ? widget.activeColor.withValues(alpha: 0.16)
+                    : _hovered
+                        ? Colors.white.withValues(alpha: 0.12)
+                        : Colors.transparent,
+                border: widget.active
+                    ? Border.all(
+                        color: widget.activeColor.withValues(alpha: 0.5))
+                    : null,
               ),
-              child: child,
-            );
-          },
+              child: widget.child,
+            ),
+            builder: (context, child) {
+              final p = _curve.value;
+              return Transform.scale(
+                scaleX: 1.0 + 0.22 * p,
+                scaleY: 1.0 - 0.13 * p,
+                child: child,
+              );
+            },
+          ),
         ),
       ),
     );

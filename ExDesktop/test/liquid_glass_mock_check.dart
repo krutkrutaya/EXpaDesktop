@@ -9,11 +9,14 @@
 // Run with a pure Dart SDK (no Flutter needed):
 //   dart run test/liquid_glass_mock_check.dart
 
+// Standalone script: bare print is its logging.
+// ignore_for_file: avoid_print
+
 import 'dart:math' as math;
 
-import '../lib/liquid_glass/menu_morph.dart';
-import '../lib/liquid_glass/menu_spring.dart';
-import '../lib/liquid_glass/spring.dart';
+import 'package:exp_desktop/liquid_glass/menu_morph.dart';
+import 'package:exp_desktop/liquid_glass/menu_spring.dart';
+import 'package:exp_desktop/liquid_glass/spring.dart';
 
 int _passed = 0;
 int _failed = 0;

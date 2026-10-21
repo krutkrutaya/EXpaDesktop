@@ -79,7 +79,10 @@ class MorphPanelController extends ChangeNotifier {
       _menuRect,
       _menuRadius,
       from: _frame,
-      velocities: prev != null && !prev.opening ? prev.velocities : null,
+      // A motion that was already flying (opening or closing mid-air) hands
+      // its velocity over, so the drop keeps sailing along its spring path
+      // instead of restarting with a straight throw.
+      velocities: prev?.velocities,
     );
     _isOpen = true;
     _start();
@@ -94,12 +97,27 @@ class MorphPanelController extends ChangeNotifier {
       _menuRect,
       _menuRadius,
       from: _frame,
-      velocities: prev != null && prev.opening ? prev.velocities : null,
+      velocities: prev?.velocities,
     );
     _start();
   }
 
-  void toggle() => (_isOpen || _frame != null) ? close() : open();
+  void toggle() {
+    final motion = _motion;
+    if (motion != null) {
+      // Spammable: a motion in flight reverses right where it is, following
+      // the spring curve — you never have to wait for it to finish first.
+      if (motion.opening) {
+        close();
+      } else {
+        open();
+      }
+    } else if (_isOpen) {
+      close();
+    } else {
+      open();
+    }
+  }
 
   void _start() {
     // Already ticking — the fresh motion gets picked up by the next tick.
@@ -129,7 +147,7 @@ class MorphPanelController extends ChangeNotifier {
 
 /// Drives the simpler [MenuFrame] scale spring (settings window).
 class MenuSpringPanelController extends ChangeNotifier {
-  MenuSpringState _state = MenuSpringState(0);
+  final MenuSpringState _state = MenuSpringState(0);
   MenuFrame _frame = const MenuFrame(
       closing: false, stopped: true, scale: 0.001, opacity: 0);
   Ticker? _ticker;

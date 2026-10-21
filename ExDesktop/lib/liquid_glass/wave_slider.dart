@@ -102,14 +102,22 @@ class _WaveSliderState extends State<WaveSlider>
           final width = constraints.maxWidth;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (d) => _apply(_posToValue(d.localPosition.dx, width)),
+            onTapDown: (d) {
+              // Jumping to a tap also bends the droplet toward the jump.
+              final v = _posToValue(d.localPosition.dx, width);
+              final span = math.max(width - (widget.thumbRadius * 1.35 + 2) * 2,
+                  1.0);
+              _stretch = ((v - _value) * span * 0.4)
+                  .clamp(-widget.thumbRadius * 2.6, widget.thumbRadius * 2.6);
+              _apply(v);
+            },
             onHorizontalDragStart: (d) {
               setState(() => _drag = true);
               _apply(_posToValue(d.localPosition.dx, width));
             },
             onHorizontalDragUpdate: (d) {
               _stretch = (_stretch * 0.45 + d.delta.dx * 0.9)
-                  .clamp(-widget.thumbRadius * 1.7, widget.thumbRadius * 1.7);
+                  .clamp(-widget.thumbRadius * 2.6, widget.thumbRadius * 2.6);
               _apply(_posToValue(d.localPosition.dx, width));
             },
             onHorizontalDragEnd: (_) {
@@ -215,11 +223,11 @@ class _WavePainter extends CustomPainter {
 
     // Thumb: a droplet that stretches against the drag direction.
     final r = thumbRadius * thumbScale;
-    final s = stretch.clamp(-r * 1.15, r * 1.15);
+    final s = stretch.clamp(-r * 1.3, r * 1.3);
     final sa = s.abs();
-    final rx = r + sa / 2;
-    final ry = r * (1 - 0.22 * (sa / (sa + r)));
-    final cx = thumbX - s / 2;
+    final rx = r + sa * 0.85;
+    final ry = r * (1 - 0.3 * (sa / (sa + r)));
+    final cx = thumbX - s * 0.45;
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(cx, cy),

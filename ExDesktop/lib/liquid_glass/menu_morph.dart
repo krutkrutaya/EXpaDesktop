@@ -210,6 +210,9 @@ class MenuMorphMotion {
   // refraction and blur are down; they never come back up.
   double _furthest = 0;
   double _soften = 0;
+  // Closing: how much of the glass's opacity is left before the capsule fade
+  // even begins — the drop melts while it is still travelling back.
+  double _travelFade = 1;
   MorphFrame _frame = const MorphFrame(
     body: [0, 0, 0, 0],
     bodyRadius: 0,
@@ -289,6 +292,9 @@ class MenuMorphMotion {
     _lensFrom = start.lens;
     _glassFrom = start.glassOpacity;
     _softenFrom = start.soften;
+    // A close that took over from a partially faded frame keeps on fading
+    // from there instead of jumping back to opaque.
+    if (!opening) _travelFade = _clamp01(start.glassOpacity);
     _aim();
     if (opening && velocities == null) {
       final launch = _capsuleS > 0 ? _capsulePush : _throw * 0.5;
@@ -505,8 +511,17 @@ class MenuMorphMotion {
       final cy = _lerp(_y.value, hc[1], c);
       body = [cx - cw / 2, cy - ch / 2, cw, ch];
       bodyRadius = math.min(cw, ch) / 2;
-      glassOpacity =
+      // The capsule fade rides on top of the travel fade that was built up.
+      final capFade =
           1 - _easeInOut(_clamp01((since - _fadeDelayS) / _fadeS));
+      glassOpacity = capFade * _travelFade;
+    } else {
+      // The drop starts going transparent while it is still on its way back,
+      // so it melts away smoothly instead of blinking out at the very end.
+      _travelFade = math.min(
+          _travelFade,
+          1 - 0.7 * _easeInOut(_clamp01(t / _arriveMaxS)));
+      glassOpacity = _travelFade;
     }
     // Measured from the furthest it got, so a menu that opened right below
     // the button does not start out half way down.

@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'player.dart';
-import 'settings-app.dart';
+import 'settings_app.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'liquid_glass/morph_controller.dart';
 import 'liquid_glass/morph_glass.dart';
@@ -289,9 +289,14 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     }
   }
 
+  // Trailing-edge debounce: the monitor lags if updates arrive faster than
+  // 40 ms apart, but the very last value of a drag burst must still land.
+  Timer? _brightnessFx;
+  Timer? _contrastFx;
+  Timer? _warmthFx;
+
   void _setSystemBrightness(double value) {
-    final now = DateTime.now();
-    if (now.difference(_lastBrightnessUpdate).inMilliseconds > 40) {
+    void apply() {
       if (value > 0.7) {
         _setBrightness?.call(0.7);
         _setBrightnessBoost?.call((value - 0.7) / 0.3);
@@ -299,23 +304,46 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         _setBrightness?.call(value);
         _setBrightnessBoost?.call(0.0);
       }
-      _lastBrightnessUpdate = now;
+      _lastBrightnessUpdate = DateTime.now();
+    }
+
+    final since =
+        DateTime.now().difference(_lastBrightnessUpdate).inMilliseconds;
+    _brightnessFx?.cancel();
+    if (since > 40) {
+      apply();
+    } else {
+      _brightnessFx = Timer(Duration(milliseconds: 40 - since), apply);
     }
   }
 
   void _setSystemContrast(double value) {
-    final now = DateTime.now();
-    if (now.difference(_lastContrastUpdate).inMilliseconds > 40) {
+    void apply() {
       _setContrast?.call(value);
-      _lastContrastUpdate = now;
+      _lastContrastUpdate = DateTime.now();
+    }
+
+    final since = DateTime.now().difference(_lastContrastUpdate).inMilliseconds;
+    _contrastFx?.cancel();
+    if (since > 40) {
+      apply();
+    } else {
+      _contrastFx = Timer(Duration(milliseconds: 40 - since), apply);
     }
   }
 
   void _setSystemWarmth(double value) {
-    final now = DateTime.now();
-    if (now.difference(_lastWarmthUpdate).inMilliseconds > 40) {
+    void apply() {
       _setWarmth?.call(value);
-      _lastWarmthUpdate = now;
+      _lastWarmthUpdate = DateTime.now();
+    }
+
+    final since = DateTime.now().difference(_lastWarmthUpdate).inMilliseconds;
+    _warmthFx?.cancel();
+    if (since > 40) {
+      apply();
+    } else {
+      _warmthFx = Timer(Duration(milliseconds: 40 - since), apply);
     }
   }
 
@@ -412,6 +440,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _timer.cancel();
     _backgroundTimer.cancel();
     _progressTimer?.cancel();
+    _brightnessFx?.cancel();
+    _contrastFx?.cancel();
+    _warmthFx?.cancel();
     _audioPlayer.dispose();
     _rotationController.dispose();
     _menuMorph?.dispose();
@@ -1001,6 +1032,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 frame: f,
                 restWidth: 600,
                 restHeight: 400,
+                // The player styles its own halves: the left panel keeps a
+                // dark blurred backdrop, the right list has none — only the
+                // track cards carry a background there.
+                tint: Colors.transparent,
                 interactive: !morph.animating,
                 child: PlayerPanel(
                   isPlaying: _isPlaying,
