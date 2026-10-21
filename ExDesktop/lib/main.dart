@@ -110,7 +110,10 @@ class _MyHomePageState extends State<MyHomePage>
   String _commandReply = '';
   Timer? _replyTimer;
   late final CommandRouter _router;
-  KeyEventHandler? _keyboardHandler;
+
+  /// Spelled out instead of the `KeyEventHandler` typedef: that name is not
+  /// part of every Flutter the app is built against.
+  KeyEventResult Function(KeyEvent event)? _keyboardHandler;
   double _brightness = 0.7;
   double _contrast = 0.7;
   double _warmth = 0.5;
@@ -930,7 +933,7 @@ class _MyHomePageState extends State<MyHomePage>
                 IconButton(
                   onPressed: _toggleCommandBar,
                   icon: const Icon(Icons.close, color: Colors.white54, size: 16),
-                  padding: EdgeInsets.zero,
+                  padding: const EdgeInsets.zero,
                   constraints:
                       const BoxConstraints(minWidth: 24, minHeight: 24),
                 ),

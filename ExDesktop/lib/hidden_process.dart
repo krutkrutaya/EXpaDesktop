@@ -474,7 +474,7 @@ String _quote(String value) {
 
 String _quoteArgs(List<String> args) {
   if (args.isEmpty) return '';
-  return ' ' + args.map(_quote).join(' ');
+  return ' ${args.map(_quote).join(' ')}';
 }
 
 /// UTF-16LE text with a null terminator, allocated on the native heap.
