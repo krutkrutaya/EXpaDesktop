@@ -5,6 +5,9 @@ import 'dart:ui';
 import 'player.dart';
 import 'settings-app.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'liquid_glass/morph_controller.dart';
+import 'liquid_glass/morph_glass.dart';
+import 'liquid_glass/wave_slider.dart';
 
 typedef SetBrightnessNative = Int32 Function(Double level);
 typedef SetBrightnessDart = int Function(double level);
@@ -63,7 +66,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     'assets/fons/fon8.jpg',
   ];
 
-  bool _isMenuOpen = false;
   bool _isDotsHovered = false;
   bool _isTopPanelHovered = false;
   bool _isPlaying = false;
@@ -72,8 +74,6 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool _isVolumeHovered = false;
   bool _isAppsHovered = false;
   bool _isBrightnessHovered = false;
-  bool _isBrightnessOpen = false;
-  bool _isPlayerOpen = false;
   bool _isSettingsOpen = false;
   bool _isSettingsMinimized = false;
   Offset _settingsPosition = Offset.zero;
@@ -82,6 +82,16 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   double _warmth = 0.5;
   int _selectedTrack = 0;
   double _trackProgress = 0.0;
+
+  // Liquid-glass panel morphs; created in didChangeDependencies, where the
+  // window size (and so the button/menu rects) is known.
+  MorphPanelController? _menuMorph;
+  MorphPanelController? _brightnessMorph;
+  MorphPanelController? _playerMorph;
+
+  bool get _isMenuOpen => _menuMorph?.active ?? false;
+  bool get _isBrightnessOpen => _brightnessMorph?.active ?? false;
+  bool get _isPlayerOpen => _playerMorph?.active ?? false;
 
   final List<Map<String, String>> _tracks = [
     {
@@ -129,18 +139,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   DateTime _lastContrastUpdate = DateTime.now();
   DateTime _lastWarmthUpdate = DateTime.now();
 
-  late final AnimationController _menuAnimationController;
-  late final Animation<double> _offsetAnimation;
-  late final Animation<double> _opacityAnimation;
-  
   late final AnimationController _rotationController;
-  
-  late final AnimationController _brightnessPanelController;
-  late final Animation<double> _brightnessPanelAnimation;
-
-  late final AnimationController _playerController;
-  late final Animation<double> _playerOffsetAnimation;
-  late final Animation<double> _playerOpacityAnimation;
 
   @override
   void initState() {
@@ -149,61 +148,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _loadBrightnessLib();
     _initAudioPlayer();
 
-    _menuAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      reverseDuration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-
-    _offsetAnimation = Tween<double>(begin: 600.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _menuAnimationController,
-        curve: Curves.easeOutQuart,
-        reverseCurve: Curves.easeInQuart,
-      ),
-    );
-
-    _opacityAnimation = CurvedAnimation(
-      parent: _menuAnimationController,
-      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
-      reverseCurve: const Interval(0.6, 1.0, curve: Curves.easeIn),
-    );
-
     _rotationController = AnimationController(
       duration: const Duration(seconds: 4),
       vsync: this,
-    );
-
-    _brightnessPanelController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      reverseDuration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-    
-    _brightnessPanelAnimation = CurvedAnimation(
-      parent: _brightnessPanelController,
-      curve: Curves.easeOutQuart,
-      reverseCurve: Curves.easeInQuart,
-    );
-
-    _playerController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      reverseDuration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-
-    _playerOffsetAnimation = Tween<double>(begin: -400.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _playerController,
-        curve: Curves.easeOutQuart,
-        reverseCurve: Curves.easeInQuart,
-      ),
-    );
-
-    _playerOpacityAnimation = CurvedAnimation(
-      parent: _playerController,
-      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
-      reverseCurve: const Interval(0.6, 1.0, curve: Curves.easeIn),
     );
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -221,6 +168,49 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         });
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final size = MediaQuery.of(context).size;
+    final w = size.width;
+    final h = size.height;
+
+    // Where each panel's glass is born from, and where it lands:
+    // the apps button in the right dock -> the power menu (700x550),
+    // the brightness button in the top panel -> the brightness panel,
+    // the mini-player capsule in the top panel -> the full player.
+    final menuButton = [w - 67.0, h - 72.0, 52.0, 52.0];
+    final menuRect = [w - 789.0, h - 570.0, 700.0, 550.0];
+
+    final brightButton = [w / 2 - 345.0, 10.0, 40.0, 40.0];
+    final brightRect = [w / 2 - 350.0, 60.0, 350.0, 180.0];
+
+    final playerButton = [w / 2 - 95.0, 5.0, 190.0, 50.0];
+    final playerRect = [w / 2 - 300.0, 70.0, 600.0, 400.0];
+
+    if (_menuMorph == null) {
+      _menuMorph = MorphPanelController(
+        buttonRect: menuButton,
+        menuRect: menuRect,
+        menuRadius: 15.0,
+      )..attach(this);
+      _brightnessMorph = MorphPanelController(
+        buttonRect: brightButton,
+        menuRect: brightRect,
+        menuRadius: 25.0,
+      )..attach(this);
+      _playerMorph = MorphPanelController(
+        buttonRect: playerButton,
+        menuRect: playerRect,
+        menuRadius: 25.0,
+      )..attach(this);
+    } else {
+      _menuMorph!.retarget(menuButton, menuRect, 15.0);
+      _brightnessMorph!.retarget(brightButton, brightRect, 25.0);
+      _playerMorph!.retarget(playerButton, playerRect, 25.0);
+    }
   }
 
   void _initAudioPlayer() {
@@ -405,10 +395,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _backgroundTimer.cancel();
     _progressTimer?.cancel();
     _audioPlayer.dispose();
-    _menuAnimationController.dispose();
     _rotationController.dispose();
-    _brightnessPanelController.dispose();
-    _playerController.dispose();
+    _menuMorph?.dispose();
+    _brightnessMorph?.dispose();
+    _playerMorph?.dispose();
     _brightnessLib = null;
     super.dispose();
   }
@@ -420,22 +410,12 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   void _toggleMenu() {
-    setState(() {
-      if (_isPlayerOpen) {
-        _isPlayerOpen = false;
-        _playerController.reverse();
-      }
-      if (_isBrightnessOpen) {
-        _isBrightnessOpen = false;
-        _brightnessPanelController.reverse();
-      }
-      _isMenuOpen = !_isMenuOpen;
-      if (_isMenuOpen) {
-        _menuAnimationController.forward();
-      } else {
-        _menuAnimationController.reverse();
-      }
-    });
+    final m = _menuMorph;
+    if (m == null) return;
+    if (_isPlayerOpen) _playerMorph?.close();
+    if (_isBrightnessOpen) _brightnessMorph?.close();
+    m.toggle();
+    setState(() {});
   }
 
   void _closeMenu() {
@@ -445,41 +425,21 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   }
 
   void _toggleBrightness() {
-    setState(() {
-      if (_isPlayerOpen) {
-        _isPlayerOpen = false;
-        _playerController.reverse();
-      }
-      if (_isMenuOpen) {
-        _isMenuOpen = false;
-        _menuAnimationController.reverse();
-      }
-      _isBrightnessOpen = !_isBrightnessOpen;
-      if (_isBrightnessOpen) {
-        _brightnessPanelController.forward();
-      } else {
-        _brightnessPanelController.reverse();
-      }
-    });
+    final m = _brightnessMorph;
+    if (m == null) return;
+    if (_isPlayerOpen) _playerMorph?.close();
+    if (_isMenuOpen) _menuMorph?.close();
+    m.toggle();
+    setState(() {});
   }
 
   void _togglePlayer() {
-    setState(() {
-      if (_isBrightnessOpen) {
-        _isBrightnessOpen = false;
-        _brightnessPanelController.reverse();
-      }
-      if (_isMenuOpen) {
-        _isMenuOpen = false;
-        _menuAnimationController.reverse();
-      }
-      _isPlayerOpen = !_isPlayerOpen;
-      if (_isPlayerOpen) {
-        _playerController.forward();
-      } else {
-        _playerController.reverse();
-      }
-    });
+    final m = _playerMorph;
+    if (m == null) return;
+    if (_isBrightnessOpen) _brightnessMorph?.close();
+    if (_isMenuOpen) _menuMorph?.close();
+    m.toggle();
+    setState(() {});
   }
 
   void _toggleSettings() {
@@ -807,235 +767,188 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          Positioned(
-            top: 0,
-            left: MediaQuery.of(context).size.width / 2 - 350,
-            child: AnimatedBuilder(
-              animation: _brightnessPanelAnimation,
-              builder: (context, child) {
-                return Transform.translate(
-                  offset: Offset(0, -191 + (_brightnessPanelAnimation.value * 251)),
-                  child: Opacity(
-                    opacity: _brightnessPanelAnimation.value,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(25.0),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                        child: Container(
-                          width: 350,
-                          height: 180,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(25.0),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              width: 1.0,
+          ListenableBuilder(
+            listenable: _brightnessMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _brightnessMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 350,
+                restHeight: 180,
+                interactive: !morph.animating,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.brightness_6, color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: WaveSlider(
+                              value: _brightness,
+                              onChanged: (value) {
+                                setState(() {
+                                  _brightness = value;
+                                });
+                                _setSystemBrightness(value);
+                              },
                             ),
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.brightness_6, color: Colors.white, size: 18),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Slider(
-                                        value: _brightness,
-                                        onChanged: (value) {
-                                          setState(() {
-                                            _brightness = value;
-                                          });
-                                          _setSystemBrightness(value);
-                                        },
-                                        activeColor: Colors.white,
-                                        inactiveColor: Colors.white24,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${(_brightness * 100).round()}%',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _brightness = 0.7;
-                                        });
-                                        _setSystemBrightness(0.7);
-                                      },
-                                      icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-                                    ),
-                                  ],
-                                ),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.contrast, color: Colors.white, size: 18),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Slider(
-                                        value: _contrast,
-                                        onChanged: (value) {
-                                          setState(() {
-                                            _contrast = value;
-                                          });
-                                          _setSystemContrast(value);
-                                        },
-                                        activeColor: Colors.white,
-                                        inactiveColor: Colors.white24,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${(_contrast * 100).round()}%',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _contrast = 0.7;
-                                        });
-                                        _setSystemContrast(0.7);
-                                      },
-                                      icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-                                    ),
-                                  ],
-                                ),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.wb_sunny, color: Colors.white, size: 18),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Slider(
-                                        value: _warmth,
-                                        onChanged: (value) {
-                                          setState(() {
-                                            _warmth = value;
-                                          });
-                                          _setSystemWarmth(value);
-                                        },
-                                        activeColor: Colors.white,
-                                        inactiveColor: Colors.white24,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${(_warmth * 100).round()}%',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _warmth = 0.5;
-                                        });
-                                        _resetGamma?.call();
-                                      },
-                                      icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                          Text(
+                            '${(_brightness * 100).round()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
                             ),
                           ),
-                        ),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _brightness = 0.7;
+                              });
+                              _setSystemBrightness(0.7);
+                            },
+                            icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                          ),
+                        ],
                       ),
-                    ),
+                      Row(
+                        children: [
+                          const Icon(Icons.contrast, color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: WaveSlider(
+                              value: _contrast,
+                              onChanged: (value) {
+                                setState(() {
+                                  _contrast = value;
+                                });
+                                _setSystemContrast(value);
+                              },
+                            ),
+                          ),
+                          Text(
+                            '${(_contrast * 100).round()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _contrast = 0.7;
+                              });
+                              _setSystemContrast(0.7);
+                            },
+                            icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          const Icon(Icons.wb_sunny, color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: WaveSlider(
+                              value: _warmth,
+                              onChanged: (value) {
+                                setState(() {
+                                  _warmth = value;
+                                });
+                                _setSystemWarmth(value);
+                              },
+                            ),
+                          ),
+                          Text(
+                            '${(_warmth * 100).round()}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _warmth = 0.5;
+                              });
+                              _resetGamma?.call();
+                            },
+                            icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
-          Positioned(
-            bottom: 20,
-            right: panelWidth + panelMargin + 12.0,
-            child: AnimatedBuilder(
-              animation: _menuAnimationController,
-              builder: (context, _) {
-                return Transform.translate(
-                  offset: Offset(0, _offsetAnimation.value),
-                  child: FadeTransition(
-                    opacity: _opacityAnimation,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(15.0),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                        child: Container(
-                          width: 700.0,
-                          height: 550.0,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(15.0),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              width: 1.0,
+          ListenableBuilder(
+            listenable: _menuMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _menuMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 700,
+                restHeight: 550,
+                interactive: !morph.animating,
+                child: SizedBox(
+                  width: 700,
+                  height: 550,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        bottom: 1.0,
+                        left: 0,
+                        right: 0,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _PowerButton(
+                              icon: Icons.description,
+                              onTap: () {},
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.3),
-                                blurRadius: 30,
-                                offset: const Offset(-10, 10),
-                              ),
-                            ],
-                          ),
-                          child: Stack(
-                            children: [
-                              Positioned(
-                                bottom: 1.0,
-                                left: 0,
-                                right: 0,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _PowerButton(
-                                      icon: Icons.description,
-                                      onTap: () {},
-                                    ),
-                                    const SizedBox(width: 1),
-                                    _PowerButton(
-                                      icon: Icons.restart_alt,
-                                      onTap: () {},
-                                    ),
-                                    const SizedBox(width: 1),
-                                    _PowerButton(
-                                      icon: Icons.power_settings_new,
-                                      onTap: () {},
-                                    ),
-                                    const SizedBox(width: 1),
-                                    _PowerButton(
-                                      icon: Icons.bedtime,
-                                      onTap: () {},
-                                    ),
-                                    const SizedBox(width: 1),
-                                    _PowerButton(
-                                      icon: Icons.settings,
-                                      onTap: _toggleSettings,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.restart_alt,
+                              onTap: () {},
+                            ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.power_settings_new,
+                              onTap: () {},
+                            ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.bedtime,
+                              onTap: () {},
+                            ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.settings,
+                              onTap: _toggleSettings,
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            },
           ),
           if (_isSettingsOpen && !_isSettingsMinimized)
             Positioned(
@@ -1060,36 +973,32 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 },
               ),
             ),
-          Positioned(
-            top: 70,
-            left: MediaQuery.of(context).size.width / 2 - 300,
-            child: AnimatedBuilder(
-              animation: _playerController,
-              builder: (context, _) {
-                return Transform.translate(
-                  offset: Offset(0, _playerOffsetAnimation.value),
-                  child: FadeTransition(
-                    opacity: _playerOpacityAnimation,
-                    child: IgnorePointer(
-                      ignoring: !_isPlayerOpen,
-                      child: PlayerPanel(
-                        isPlaying: _isPlaying,
-                        selectedTrack: _selectedTrack,
-                        progress: _trackProgress,
-                        tracks: _tracks,
-                        currentTime: _currentTime,
-                        totalDuration: _totalDuration,
-                        onTogglePlay: _toggleTrackPlay,
-                        onNextTrack: _nextTrack,
-                        onPrevTrack: _prevTrack,
-                        onSeek: _seekTrack,
-                        onSelectTrack: _selectTrack,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
+          ListenableBuilder(
+            listenable: _playerMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _playerMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 600,
+                restHeight: 400,
+                interactive: !morph.animating,
+                child: PlayerPanel(
+                  isPlaying: _isPlaying,
+                  selectedTrack: _selectedTrack,
+                  progress: _trackProgress,
+                  tracks: _tracks,
+                  currentTime: _currentTime,
+                  totalDuration: _totalDuration,
+                  onTogglePlay: _toggleTrackPlay,
+                  onNextTrack: _nextTrack,
+                  onPrevTrack: _prevTrack,
+                  onSeek: _seekTrack,
+                  onSelectTrack: _selectTrack,
+                ),
+              );
+            },
           ),
           Positioned(
             top: 10.0,

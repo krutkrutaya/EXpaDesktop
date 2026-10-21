@@ -1,6 +1,9 @@
 // settings-app.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'dart:ui';
+
+import 'liquid_glass/menu_spring.dart';
 
 class SettingsApp extends StatefulWidget {
   final VoidCallback onClose;
@@ -21,13 +24,17 @@ class SettingsApp extends StatefulWidget {
 }
 
 class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scaleAnimation;
-  late final Animation<double> _opacityAnimation;
-  late final Animation<double> _slideAnimation;
+  // Liquid-glass spring: opens with a bounce past 1.0 and settles, closes
+  // with a smooth exponential shrink, opacity fading out ahead of it.
+  late final Ticker _ticker;
+  final MenuSpringState _spring = MenuSpringState(0);
+  double _lastElapsedS = 0;
+  double _scale = 0.001;
+  double _opacity = 0;
   int _hoveredIndex = -1;
   int _selectedIndex = -1;
   late Offset _position;
+  int _pendingAction = 0; // 0 none, 1 close, 2 minimize
 
   final List<Map<String, dynamic>> _sections = [
     {
@@ -91,60 +98,65 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _position = widget.initialPosition;
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 400),
-      reverseDuration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 0.7, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutBack,
-        reverseCurve: Curves.easeInBack,
-      ),
-    );
-    _opacityAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
-      reverseCurve: const Interval(0.2, 1.0, curve: Curves.easeIn),
-    );
-    _slideAnimation = Tween<double>(begin: 600.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeOutQuart,
-        reverseCurve: Curves.easeInQuart,
-      ),
-    );
-    _controller.forward();
+    _ticker = createTicker(_onTick);
+    _spring.target = 1;
+    _ticker.start();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ticker.dispose();
     super.dispose();
   }
 
+  void _onTick(Duration elapsed) {
+    final seconds = elapsed.inMicroseconds / 1e6;
+    final dt = seconds - _lastElapsedS;
+    _lastElapsedS = seconds;
+    if (dt <= 0) return;
+    final frame = stepMenuSpring(_spring, dt * 1000);
+    _scale = frame.scale;
+    _opacity = frame.opacity;
+    setState(() {});
+    if (frame.stopped) {
+      _ticker.stop();
+      _lastElapsedS = 0;
+      if (_pendingAction == 1) {
+        widget.onClose();
+      } else if (_pendingAction == 2) {
+        widget.onMinimize();
+      }
+      _pendingAction = 0;
+    }
+  }
+
   void _closeWithAnimation() {
-    _controller.reverse().then((_) {
-      widget.onClose();
-    });
+    _pendingAction = 1;
+    _spring.target = 0;
+    _resume();
   }
 
   void _minimizeWithAnimation() {
-    _controller.reverse().then((_) {
-      widget.onMinimize();
-    });
+    _pendingAction = 2;
+    _spring.target = 0;
+    _resume();
+  }
+
+  void _resume() {
+    if (_ticker.isActive) return; // already ticking, will pick the new target up
+    _lastElapsedS = 0;
+    _ticker.start();
   }
 
   @override
   Widget build(BuildContext context) {
     int itemIndex = 0;
     return Transform.translate(
-      offset: _position + Offset(0, _slideAnimation.value),
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: FadeTransition(
-          opacity: _opacityAnimation,
+      offset: _position,
+      child: Transform.scale(
+        scale: _scale,
+        child: Opacity(
+          opacity: _opacity / 255,
           child: SizedBox(
             width: 850,
             height: 520,
