@@ -52,6 +52,15 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
+      - name: nuget.exe on PATH
+        shell: pwsh
+        # audioplayers_windows fetches nuget.exe during CMake configure, and
+        # CMake's own downloader is flaky; a local copy skips the download.
+        run: |
+          New-Item -ItemType Directory -Force C:\nuget | Out-Null
+          curl.exe -sL -o C:\nuget\nuget.exe https://dist.nuget.org/win-x86-commandline/v6.5.0/nuget.exe
+          "C:\nuget" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - name: Build
         run: flutter build windows --release
 
