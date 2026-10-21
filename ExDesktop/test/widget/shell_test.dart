@@ -76,6 +76,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('tapping the desktop closes the sound flyout', (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('topbar-volume')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('volume-flyout')), findsOneWidget);
+
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('volume-flyout')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the desktop closes the nine-dot launcher',
+      (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('launcher-pill')));
+    await _settle(tester);
+    expect(find.text('Калькулятор'), findsOneWidget);
+
+    await tester.tapAt(const Offset(240, 700));
+    await _settle(tester);
+
+    expect(find.text('Калькулятор'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tapping the desktop leaves the settings window open',
+      (tester) async {
+    await _pumpShell(tester);
+
+    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
+    await _settle(tester);
+
+    await tester.tapAt(const Offset(240, 860));
+    await _settle(tester);
+
+    // A window, not a flyout: it keeps its title bar and its place.
+    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the buildings fit a 1366x768 screen', (tester) async {
     await _pumpShell(tester, size: const Size(1366, 768));
     await tester.tap(find.byKey(const ValueKey('launcher-pill')));

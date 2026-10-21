@@ -218,6 +218,11 @@ Future<HiddenResult> runPowerShell(
   String script, {
   Duration timeout = const Duration(seconds: 20),
 }) {
+  // PowerShell writes stdout with the console output encoding. On a
+  // non-Russian Windows that is not UTF-8, and a Cyrillic device name would
+  // arrive as mojibake, so the encoding is pinned for every run.
+  const prelude = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n'
+      r'$OutputEncoding = [System.Text.Encoding]::UTF8' '\n';
   return runHidden(
     'powershell.exe',
     [
@@ -226,7 +231,7 @@ Future<HiddenResult> runPowerShell(
       '-ExecutionPolicy',
       'Bypass',
       '-EncodedCommand',
-      _encodeCommand(script),
+      _encodeCommand('$prelude$script'),
     ],
     timeout: timeout,
   );

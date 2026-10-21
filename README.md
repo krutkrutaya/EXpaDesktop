@@ -119,6 +119,7 @@ ExDesktop/
 │   ├── shell_layout.dart        # where every panel sits, as testable numbers
 │   ├── shell_panels.dart        # which surface may share the screen with which
 │   ├── id3_art.dart             # title / artist / cover from the mp3 tags
+│   ├── track_art.dart           # one artwork rule: cover, asset, placeholder
 │   ├── liquid_glass/            # 🔬 physics & widgets
 │   │   ├── menu_morph.dart      #   capsule→drop→panel morph
 │   │   ├── menu_spring.dart     #   bouncy scale (settings)
@@ -142,45 +143,86 @@ ExDesktop/
     ├── system_mock_check.dart        # 🧪 415 system + assistant mock tests
     └── widget/
         ├── settings_app_test.dart    # 🧪 11 widget tests: panes, switches
-        └── shell_test.dart           # 🧪 6 widget tests: surfaces, overflow
+        ├── shell_test.dart           # 🧪 9 widget tests: surfaces, tap-away
+        └── track_art_test.dart       # 🧪 4 widget tests: artwork fallbacks
 ```
 
 `windows/` holds the generated runner (CMake + C++ window host).
 
-## 🚀 Building
+## 🚀 Getting it running
 
-Requirements: **Flutter 3.x**, **Visual Studio 2022/2026 with the "Desktop
-development with C++" workload** (MSVC + CMake + Windows 10/11 SDK), and
-**Developer Mode** turned on (Flutter symlinks plugins on Windows).
+**The repo ships sources, not binaries** — `build/` and every artefact stay on
+your machine. Build it once, here is the whole path from a clean Windows.
 
-```bash
+### 1. Flutter
+
+```powershell
+# any folder without spaces or Cyrillic; C:\src is the usual choice
+New-Item -ItemType Directory -Force C:\src | Out-Null
+curl.exe -L -o C:\src\flutter.zip https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.7-stable.zip
+tar.exe -xf C:\src\flutter.zip -C C:\src
+Remove-Item C:\src\flutter.zip
+[Environment]::SetEnvironmentVariable("Path", "C:\src\flutter\bin;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+```
+
+Open a new terminal and check `flutter --version`.
+
+### 2. The C++ toolchain (needed to build a Windows app)
+
+Visual Studio Installer → **Modify** → tick **Desktop development with C++**
+(MSVC, C++ CMake tools, Windows 10/11 SDK). `flutter doctor` turns green when
+it sees them.
+
+### 3. Developer Mode
+
+Flutter symlinks plugin packages on Windows, which needs symlink support:
+
+```powershell
+start ms-settings:developers
+```
+
+→ turn **Developer Mode** on.
+
+### 4. `nuget.exe` on PATH
+
+`audioplayers_windows` asks CMake to download `nuget.exe` while configuring,
+and that downloader is flaky (`schannel: server closed abruptly`). A local copy
+makes the plugin skip the download:
+
+```powershell
+New-Item -ItemType Directory -Force C:\src\nuget | Out-Null
+curl.exe -L -o C:\src\nuget\nuget.exe https://dist.nuget.org/win-x86-commandline/v6.5.0/nuget.exe
+$env:Path = "C:\src\nuget;$env:Path"
+```
+
+### 5. Run it
+
+```powershell
 cd ExDesktop
 flutter pub get
-flutter run -d windows          # or: flutter build windows --release
+flutter run -d windows            # debug, with hot reload
+flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desktop.exe
 ```
 
+The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
+`audioplayers_windows_plugin.dll`, `brightness.dll` and `data\flutter_assets\`.
 The Windows runner lives in `ExDesktop/windows/` (generated with
-`flutter create --platforms=windows .` and committed, so a fresh clone
-builds). The Rust DLL is already built and lives at `lib/rust/brightness.dll`.
-To rebuild it yourself:
+`flutter create --platforms=windows .` and committed, so a fresh clone builds).
 
-```bash
-cd lib/rust
-cargo build --release
-cp target/release/brightness.dll .
-```
+The Rust DLL is vendored prebuilt at `lib/rust/brightness.dll`; rebuild it with
+`cd lib/rust; cargo build --release; cp target/release/brightness.dll .`.
 
 ## 🧪 Tests
 
 Widget tests run under `flutter test`; the system, shell and physics suites are
 plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
-prints a single total — **682 checks**, plus **17 widget tests**.
+prints a single total — **710 checks**, plus **24 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 17 widget tests
+flutter test                                 # 24 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 682 mock checks
+dart run test/mock_all.dart                  # 710 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
 dart run test/system_mock_check.dart         # system + assistant, 415 checks
 dart run test/shell_check.dart               # layout, panel policy, ID3: 214 checks

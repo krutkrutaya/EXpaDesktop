@@ -629,14 +629,22 @@ void testSoundControl() {
 
   // Round-trip through COM: the getter must return the level, not the
   // HRESULT. It used to return 0, which made every panel open at 0%.
+  // A CI runner has no audio endpoint; there the getter is a cached value
+  // and a round-trip would be meaningless, not failing.
+  final hasEndpoint = VolumeControl.instance.available;
+  if (!hasEndpoint) {
+    check('the volume round-trip is skipped (no audio endpoint)', true);
+  }
   final before = VolumeControl.instance.volume;
   try {
+    if (hasEndpoint) {
     VolumeControl.instance.volume = 0.37;
-    checkClose('the volume getter returns the level, not the HRESULT',
-        VolumeControl.instance.volume, 0.37, 0.02);
-    VolumeControl.instance.volume = 0.61;
-    checkClose('the volume getter follows a second change',
-        VolumeControl.instance.volume, 0.61, 0.02);
+      checkClose('the volume getter returns the level, not the HRESULT',
+          VolumeControl.instance.volume, 0.37, 0.02);
+      VolumeControl.instance.volume = 0.61;
+      checkClose('the volume getter follows a second change',
+          VolumeControl.instance.volume, 0.61, 0.02);
+    }
   } finally {
     VolumeControl.instance.volume = before;
   }

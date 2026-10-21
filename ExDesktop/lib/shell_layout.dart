@@ -42,15 +42,21 @@ class ShellLayout {
   Rect4 get playerRect => [width / 2 - 300, 70, 600, 400];
 
   // ---- volume flyout (top right) ------------------------------------------
-  Rect4 get volumeButton => [width - 89, 10, 40, 40];
-
-  /// The flyout ends before the dock starts: at its old position it ran
+  /// The volume flyout ends before the dock starts: at its old position it ran
   /// 42 px underneath it, which is the overlap the screenshot showed.
   Rect4 get volumeRect => [dockLeft - dockGap - 320, 68, 320, 100];
 
+  /// Where the flyout's drop goes when it closes: a little right and a little
+  /// down from the icon, so it disappears *into* the right dock instead of
+  /// hanging in the corner next to it.
+  Rect4 get volumeButton => [width - 76, 22, 40, 40];
+
   // ---- launcher (the nine dots in the dock) -------------------------------
   Rect4 get launcherButton => [width - 67, height / 2 - 50, 52, 100];
-  Rect4 get launcherRect => [width / 2 - 160, height / 2 - 200, 320, 400];
+
+  /// A compact landscape rectangle: three columns of icons, not a tall
+  /// column of rows.
+  Rect4 get launcherRect => [width / 2 - 160, height / 2 - 105, 320, 210];
 
   // ---- the settings window -------------------------------------------------
   Rect4 get settingsRect => [width / 2 - 425, height / 2 - 260, 850, 520];

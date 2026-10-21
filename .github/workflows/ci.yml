@@ -6,6 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Checks only: the release build is a local step (see README) — the repo
+# keeps sources, not binaries.
 jobs:
   checks:
     name: analyze + tests
@@ -30,43 +32,5 @@ jobs:
       - name: Widget tests
         run: flutter test
 
-      - name: Mock suites (465 checks)
+      - name: Mock suites
         run: dart run test/mock_all.dart
-
-  build:
-    name: windows release build
-    runs-on: windows-latest
-    needs: checks
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    defaults:
-      run:
-        working-directory: ExDesktop
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Pub get
-        run: flutter pub get
-
-      - name: nuget.exe on PATH
-        shell: pwsh
-        # audioplayers_windows fetches nuget.exe during CMake configure, and
-        # CMake's own downloader is flaky; a local copy skips the download.
-        run: |
-          New-Item -ItemType Directory -Force C:\nuget | Out-Null
-          curl.exe -sL -o C:\nuget\nuget.exe https://dist.nuget.org/win-x86-commandline/v6.5.0/nuget.exe
-          "C:\nuget" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-
-      - name: Build
-        run: flutter build windows --release
-
-      - name: Upload the exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: exp_desktop-windows
-          path: ExDesktop/build/windows/x64/runner/Release/
-          if-no-files-found: error

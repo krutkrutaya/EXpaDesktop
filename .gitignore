@@ -18,3 +18,12 @@ Desktop.ini
 
 # Local agent instructions, not part of the repo
 AGENTS.md
+
+# Build output is local: the repo keeps sources, not binaries
+build/
+*.exe
+*.pdb
+*.obj
+*.ilk
+*.exp
+*.lib

@@ -216,6 +216,13 @@ class VolumeControl {
 
   static final VolumeControl instance = VolumeControl._();
 
+  /// Whether the COM chain found a default playback endpoint.
+  ///
+  /// False on a machine without an audio device (a CI runner, a headless
+  /// box): the getters keep their last value and the setters are no-ops,
+  /// and callers can say so instead of pretending the number is real.
+  bool get available => _ensure() != null;
+
   bool _ready = false;
   double _coarseVolume = 0.5;
   bool _coarseMuted = false;

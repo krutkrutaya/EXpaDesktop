@@ -65,6 +65,25 @@ void testLayoutNumbers() {
       layout.volumeRect[0] + layout.volumeRect[2] <= layout.dockLeft,
     );
 
+    // The sound drop has to fly *into* the dock, not sit next to it.
+    final dropCentre = layout.volumeButton[0] + layout.volumeButton[2] / 2;
+    check(
+      '$label: the sound drop lands inside the dock',
+      dropCentre >= layout.dockLeft &&
+          dropCentre <= layout.width - ShellLayout.dockMargin,
+    );
+
+    // The launcher is a small landscape menu in the middle, not a tall column.
+    check('$label: the launcher is wider than it is tall',
+        layout.launcherRect[2] > layout.launcherRect[3]);
+    check('$label: the launcher is compact',
+        layout.launcherRect[2] <= 400 && layout.launcherRect[3] <= 260);
+    checkClose(
+      '$label: the launcher is vertically centred',
+      layout.launcherRect[1] + layout.launcherRect[3] / 2,
+      layout.height / 2,
+    );
+
     // The three centred surfaces are really centred.
     checkClose(
       '$label: launcher is horizontally centred',

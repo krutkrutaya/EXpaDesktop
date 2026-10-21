@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'track_art.dart';
 import 'liquid_glass/wave_slider.dart';
 import 'liquid_glass/stretch_icon_button.dart';
 
@@ -266,10 +267,11 @@ class _PlayerPanelState extends State<PlayerPanel> {
                                 curve: Curves.easeOutBack,
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(12),
-                                  child: _coverImage(
-                                    widget.selectedTrack,
-                                    width: 95,
-                                    height: 95,
+                                  child: TrackArt(
+                                    cover: _embeddedCover(widget.selectedTrack),
+                                    avatar: _getAvatar(widget.selectedTrack),
+                                    size: 95,
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
                               ),
@@ -461,9 +463,12 @@ class _PlayerPanelState extends State<PlayerPanel> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: _hasArt(index)
-                            ? _coverImage(index, width: 38, height: 38)
-                            : _buildSmallPlaceholder(),
+                        child: TrackArt(
+                          cover: _embeddedCover(index),
+                          avatar: _getAvatar(index),
+                          size: 38,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(

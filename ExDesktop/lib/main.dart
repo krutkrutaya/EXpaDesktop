@@ -16,6 +16,7 @@ import 'shell_layout.dart';
 import 'radio_control.dart';
 import 'shell_panels.dart';
 import 'sound_control.dart';
+import 'track_art.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'liquid_glass/morph_controller.dart';
 import 'liquid_glass/morph_glass.dart';
@@ -734,6 +735,26 @@ class _MyHomePageState extends State<MyHomePage>
     setState(() {});
   }
 
+  /// A click on the bare desktop closes every floating surface.
+  ///
+  /// The settings window is a window, not a flyout: it keeps its title bar
+  /// and its X, and stays where it is. Everything else is transient.
+  void _dismissFloatingSurfaces() {
+    if (!_isVolumeOpen &&
+        !_isBrightnessOpen &&
+        !_isPlayerOpen &&
+        !_isMenuOpen &&
+        !_isLauncherOpen) {
+      return;
+    }
+    if (_isVolumeOpen) _volumeMorph?.close();
+    if (_isBrightnessOpen) _brightnessMorph?.close();
+    if (_isPlayerOpen) _playerMorph?.close();
+    if (_isMenuOpen) _menuMorph?.close();
+    if (_isLauncherOpen) _launcherMorph?.close();
+    setState(() {});
+  }
+
   void _closeMenu() {
     if (_isMenuOpen) {
       _toggleMenu();
@@ -791,11 +812,10 @@ class _MyHomePageState extends State<MyHomePage>
     }
   }
 
-  // The 3x3 app grid of the launcher. Built fresh on each build so the
-  // tiles feel the theme (and survive hot reload) the same as everything
-  // else on the desktop.
-  List<List<Widget>> get _launcherRows => [
-        [
+  // The launcher is a compact rounded rectangle in the middle of the
+  // screen: nine icons in a 3x3 wrap, not a tall column of rows. Built
+  // fresh on each build so the tiles feel the theme.
+  List<Widget> get _launcherTiles => [
           _LauncherTile(
             icon: Icons.calculate_outlined,
             label: 'Калькулятор',
@@ -813,8 +833,6 @@ class _MyHomePageState extends State<MyHomePage>
             label: 'Файлы',
             onTap: () => unawaited(launchExe('explorer.exe')),
           ),
-        ],
-        [
           _LauncherTile(
             icon: Icons.brush_outlined,
             label: 'Paint',
@@ -830,8 +848,6 @@ class _MyHomePageState extends State<MyHomePage>
             label: 'Задачи',
             onTap: () => unawaited(launchExe('taskmgr.exe')),
           ),
-        ],
-        [
           _LauncherTile(
             icon: Icons.terminal_outlined,
             label: 'Терминал',
@@ -849,7 +865,6 @@ class _MyHomePageState extends State<MyHomePage>
             // is the shell, so its "Settings" tile must stay inside it.
             onTap: () => _openSettingsAt(null),
           ),
-        ],
       ];
 
   /// Asks once, then applies: restart, shutdown, sleep and sign-out go
@@ -1208,6 +1223,16 @@ class _MyHomePageState extends State<MyHomePage>
               ),
             ),
           ),
+          // Tap-away layer: sits under every panel, so a click on the bare
+          // desktop closes the flyouts and the launcher. Panels are above it
+          // and swallow their own clicks.
+          Positioned.fill(
+            child: GestureDetector(
+              key: const ValueKey('desktop-backdrop'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _dismissFloatingSurfaces,
+            ),
+          ),
           Positioned(
             top: 20.0,
             left: 30.0,
@@ -1329,31 +1354,14 @@ class _MyHomePageState extends State<MyHomePage>
                                           builder: (context, child) {
                                             return Transform.rotate(
                                               angle: _rotationController.value * 2 * 3.14159,
-                                              child: Container(
-                                                width: 40,
-                                                height: 40,
-                                                decoration: BoxDecoration(
-                                                  color: Colors.grey,
-                                                  borderRadius: BorderRadius.circular(10),
-                                                ),
-                                                child: ClipRRect(
-                                                  borderRadius: BorderRadius.circular(10),
-                                                  child: Image.asset(
-                                                    _tracks[_selectedTrack]['avatar']?.isNotEmpty == true
-                                                        ? _tracks[_selectedTrack]['avatar']!
-                                                        : 'assets/music/ava-track-3.jpg',
-                                                    width: 40,
-                                                    height: 40,
-                                                    fit: BoxFit.cover,
-                                                    errorBuilder: (context, error, stack) {
-                                                      return Icon(
-                                                        Icons.music_note,
-                                                        color: Colors.white.withValues(alpha: 0.8),
-                                                        size: 24,
-                                                      );
-                                                    },
-                                                  ),
-                                                ),
+                                              // The same artwork rule as the
+                                              // full player: embedded cover,
+                                              // then the bundled image, then
+                                              // the shell's own placeholder.
+                                              child: TrackArt(
+                                                cover: _covers[_tracks[_selectedTrack]['file']],
+                                                avatar: _tracks[_selectedTrack]['avatar'],
+                                                size: 40,
                                               ),
                                             );
                                           },
@@ -1649,6 +1657,7 @@ class _MyHomePageState extends State<MyHomePage>
                 restHeight: 100,
                 interactive: !morph.animating,
                 child: Padding(
+                  key: const ValueKey('volume-flyout'),
                   padding: const EdgeInsets.symmetric(horizontal: 15),
                   child: Row(
                     children: [
@@ -1703,22 +1712,21 @@ class _MyHomePageState extends State<MyHomePage>
               return MorphGlass(
                 frame: f,
                 restWidth: 320,
-                restHeight: 400,
+                restHeight: 210,
                 interactive: !morph.animating,
                 child: SizedBox(
                   width: 320,
-                  height: 400,
+                  height: 210,
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        for (final row in _launcherRows)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: row,
-                          ),
-                      ],
+                    padding: const EdgeInsets.all(11),
+                    // A compact rounded rectangle in the middle of the screen:
+                    // three columns of icons, no tall column of rows.
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      runAlignment: WrapAlignment.center,
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _launcherTiles,
                     ),
                   ),
                 ),
@@ -2178,8 +2186,8 @@ class _LauncherTileState extends State<_LauncherTile> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          width: 84,
-          height: 84,
+          width: 92,
+          height: 58,
           decoration: BoxDecoration(
             color: _isHovered
                 ? Colors.white.withValues(alpha: 0.16)
@@ -2189,13 +2197,15 @@ class _LauncherTileState extends State<_LauncherTile> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(widget.icon, color: Colors.white, size: 26),
-              const SizedBox(height: 7),
+              Icon(widget.icon, color: Colors.white, size: 24),
+              const SizedBox(height: 3),
               Text(
                 widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 11,
+                  fontSize: 9.5,
                 ),
               ),
             ],
