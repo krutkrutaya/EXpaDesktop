@@ -87,7 +87,9 @@ class _WaveSliderState extends State<WaveSlider>
     final target = _drag ? 1.0 : (_hover ? 0.45 : 0.16);
     _amp += (target - _amp) * (1 - math.exp(-t * 9));
     _phase += t * (_drag ? 9.0 : 0.7);
-    _stretch *= math.exp(-t * (_drag ? 9 : 13));
+    // While dragging the droplet holds its shape; the pull relaxes right
+    // after the finger leaves it.
+    _stretch *= math.exp(-t * (_drag ? 6 : 13));
     if (_stretch.abs() < 0.05) _stretch = 0;
     final st = (_hover || _drag) ? 1.35 : 1.0;
     _scale += (st - _scale) * (1 - math.exp(-t * 14));
@@ -133,8 +135,8 @@ class _WaveSliderState extends State<WaveSlider>
               final span = math.max(width - pad * 2, 1.0);
               final from =
                   _dragStartValue + (d.localPosition.dx - _dragStartX) / span;
-              _stretch = (_stretch * 0.45 + d.delta.dx * 0.9)
-                  .clamp(-widget.thumbRadius * 1.7, widget.thumbRadius * 1.7);
+              _stretch = (_stretch * 0.5 + d.delta.dx * 1.6)
+                  .clamp(-widget.thumbRadius * 2, widget.thumbRadius * 2);
               _apply(from);
             },
             onHorizontalDragEnd: (_) {
@@ -240,11 +242,11 @@ class _WavePainter extends CustomPainter {
 
     // Thumb: a droplet that stretches against the drag direction.
     final r = thumbRadius * thumbScale;
-    final s = stretch.clamp(-r * 1.15, r * 1.15);
+    final s = stretch.clamp(-r * 1.25, r * 1.25);
     final sa = s.abs();
-    final rx = r + sa / 2;
-    final ry = r * (1 - 0.22 * (sa / (sa + r)));
-    final cx = thumbX - s / 2;
+    final rx = r + sa * 1.1;
+    final ry = r * (1 - 0.35 * (sa / (sa + r)));
+    final cx = thumbX - s * 0.8;
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(cx, cy),

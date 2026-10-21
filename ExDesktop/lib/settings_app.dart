@@ -150,7 +150,6 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    int itemIndex = 0;
     return Transform.translate(
       offset: _position,
       child: Transform.scale(
@@ -178,71 +177,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                       ),
                       child: ListView(
                         padding: const EdgeInsets.all(10),
-                        children: _sections.map((section) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 6),
-                                child: Text(
-                                  section['title'] as String,
-                                  style: const TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              ...(section['items'] as List).map((item) {
-                                final currentIndex = itemIndex;
-                                itemIndex++;
-                                return MouseRegion(
-                                  onEnter: (event) => setState(() => _hoveredIndex = currentIndex),
-                                  onExit: (event) => setState(() => _hoveredIndex = -1),
-                                  child: GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _selectedIndex = currentIndex;
-                                      });
-                                    },
-                                    child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 150),
-                                      margin: const EdgeInsets.symmetric(vertical: 2),
-                                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                                      decoration: BoxDecoration(
-                                        color: _selectedIndex == currentIndex
-                                            ? Colors.white.withValues(alpha: 0.2)
-                                            : _hoveredIndex == currentIndex
-                                                ? Colors.white.withValues(alpha: 0.1)
-                                                : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            item['icon'] as IconData,
-                                            color: Colors.white,
-                                            size: 18,
-                                          ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: Text(
-                                              item['label'] as String,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 13,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            ],
-                          );
-                        }),
+                        children: _buildSettingSections(),
                       ),
                     ),
                   ),
@@ -338,5 +273,73 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         ),
       ),
     );
+  }
+
+  /// The left column of the settings window: each section's title followed
+  /// by its items, flattened into one scroll list. A running index across
+  /// every item backs the hover/selection states.
+  List<Widget> _buildSettingSections() {
+    final widgets = <Widget>[];
+    var itemIndex = 0;
+    for (final section in _sections) {
+      widgets.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          section['title'] as String,
+          style: const TextStyle(
+            color: Colors.white54,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ));
+      for (final item in section['items'] as List) {
+        final currentIndex = itemIndex++;
+        widgets.add(MouseRegion(
+          onEnter: (event) => setState(() => _hoveredIndex = currentIndex),
+          onExit: (event) => setState(() => _hoveredIndex = -1),
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedIndex = currentIndex;
+              });
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              margin: const EdgeInsets.symmetric(vertical: 2),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+              decoration: BoxDecoration(
+                color: _selectedIndex == currentIndex
+                    ? Colors.white.withValues(alpha: 0.2)
+                    : _hoveredIndex == currentIndex
+                        ? Colors.white.withValues(alpha: 0.1)
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    item['icon'] as IconData,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      item['label'] as String,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ));
+      }
+    }
+    return widgets;
   }
 }
