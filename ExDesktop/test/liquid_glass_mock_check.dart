@@ -23,26 +23,12 @@ import 'dart:math' as math;
 import 'package:exp_desktop/liquid_glass/menu_morph.dart';
 import 'package:exp_desktop/liquid_glass/menu_spring.dart';
 import 'package:exp_desktop/liquid_glass/spring.dart';
-import 'package:exp_desktop/system_actions.dart';
 import 'package:exp_desktop/volume_control.dart';
+
+import 'mock_harness.dart';
 
 typedef _NoArgsNative = Void Function();
 typedef _NoArgsDart = void Function();
-
-int _passed = 0;
-int _failed = 0;
-final List<String> _failures = [];
-
-void check(String name, bool ok) {
-  if (ok) {
-    _passed++;
-    print('  PASS  $name');
-  } else {
-    _failed++;
-    _failures.add(name);
-    print('  FAIL  $name');
-  }
-}
 
 double rectDist(List<double> a, List<double> b) {
   double s = 0;
@@ -52,8 +38,9 @@ double rectDist(List<double> a, List<double> b) {
   return math.sqrt(s);
 }
 
-void main() {
-  print('== liquid-glass mock tests ==');
+/// Runs the physics suite. `mock_all.dart` calls this directly.
+void runPhysicsChecks() {
+  section('== liquid-glass mock tests ==');
   testSpring();
   testMenuSpring();
   testOpenMorph();
@@ -63,15 +50,11 @@ void main() {
   testFuzz();
   testSystemActionsStatic();
   testSystemVolume();
-  print('');
-  print('passed: $_passed   failed: $_failed');
-  if (_failed > 0) {
-    for (final f in _failures) {
-      print('  !! $f');
-    }
-    throw StateError('MOCK TESTS FAILED');
-  }
-  print('ALL GREEN');
+}
+
+void main() {
+  runPhysicsChecks();
+  finish('liquid-glass');
 }
 
 void testSpring() {
@@ -443,10 +426,9 @@ void testSystemActionsStatic() {
       File(r'C:\Windows\System32\rundll32.exe').existsSync());
   // user32.dll resolves LockWorkStation without calling it.
   try {
-    final user32 = DynamicLibrary.open('user32.dll');
-    final fn = user32
+    DynamicLibrary.open('user32.dll')
         .lookupFunction<_NoArgsNative, _NoArgsDart>('LockWorkStation');
-    check('user32 LockWorkStation binds without firing', fn != null);
+    check('user32 LockWorkStation binds without firing', true);
   } catch (e) {
     check('user32 LockWorkStation binds without firing', false);
   }

@@ -1,9 +1,15 @@
-// Mock tests for the shell's system layer: the hidden console runner, the
-// radio reader, the phrase matcher and the assistant's catalog.
+// Mock tests for the shell's system layer and the assistant.
 //
-// Nothing here changes the machine: the radio is only read from a recorded
-// script output, the command router talks to a recorder instead of the real
-// device, and the only live calls are a hidden echo and a read-only look at
+// Four things are exercised here:
+//   1. the hidden console runner (stdout/stderr/exit codes/timeouts/UTF-8),
+//   2. the radio line protocol (every state, malformed input, adapters),
+//   3. the Russian phrase matcher (a table of ~100 phrasings, positive and
+//      negative, including the traps that used to misfire),
+//   4. the router + the assistant's catalog and prompt (they must not drift).
+//
+// Nothing here changes the machine: the radio is parsed from recorded script
+// output, the router talks to a recorder instead of the real device, and the
+// only live calls are hidden `cmd`/`powershell` runs plus a read-only look at
 // the audio endpoint.
 //
 // Run with a pure Dart SDK (no Flutter needed):
@@ -12,322 +18,693 @@
 // Standalone script: bare print is its logging.
 // ignore_for_file: avoid_print
 
+import 'dart:ffi';
+import 'dart:io';
+
 import 'package:exp_desktop/assistant_prompt.dart';
 import 'package:exp_desktop/command_router.dart';
 import 'package:exp_desktop/hidden_process.dart';
+import 'package:exp_desktop/native_heap.dart';
 import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/radio_script.dart';
 import 'package:exp_desktop/sound_control.dart';
+import 'package:exp_desktop/volume_control.dart';
 
-int _passed = 0;
-int _failed = 0;
-final List<String> _failures = [];
+import 'mock_harness.dart';
 
-void check(String name, bool ok) {
-  if (ok) {
-    _passed++;
-    print('  PASS  $name');
-  } else {
-    _failed++;
-    _failures.add(name);
-    print('  FAIL  $name');
-  }
-}
-
-void checkEquals(String name, Object? actual, Object? expected) {
-  final ok = actual.toString() == expected.toString();
-  if (ok) {
-    _passed++;
-    print('  PASS  $name');
-  } else {
-    _failed++;
-    _failures.add('$name (got $actual, want $expected)');
-    print('  FAIL  $name — got $actual, want $expected');
-  }
-}
-
-Future<void> main() async {
-  print('== system mock tests ==');
+/// Runs the system suite. `mock_all.dart` calls this directly.
+Future<void> runSystemChecks() async {
   await testHiddenProcess();
+  testNativeHeap();
+  testRadioScript();
   testRadioParsing();
-  await testRadioScript();
+  testRadioLabels();
   testCommandParser();
   await testRouter();
   testPromptCatalog();
   testSoundControl();
-  print('');
-  print('passed: $_passed   failed: $_failed');
-  if (_failed > 0) {
-    for (final f in _failures) {
-      print('  !! $f');
-    }
-    throw StateError('MOCK TESTS FAILED');
-  }
-  print('ALL GREEN');
+  testSourceGuards();
 }
+
+Future<void> main() async {
+  await runSystemChecks();
+  finish('system');
+}
+
+// ---- 1. the hidden console runner --------------------------------------------
 
 Future<void> testHiddenProcess() async {
-  print('[hidden process]');
+  section('[hidden process]');
+
   final echo = await runHidden('cmd.exe', ['/c', 'echo hello']);
-  check('echo exits cleanly', echo.exitCode == 0);
-  check('stdout captured', echo.stdout.contains('hello'));
-  check('stdout split into lines', echo.lines.contains('hello'));
+  checkEquals('cmd echo exit code', echo.exitCode, 0);
+  checkContains('cmd echo stdout', echo.stdout, 'hello');
+  checkEquals('stdout splits into lines', echo.lines, ['hello']);
 
   final failing = await runHidden('cmd.exe', ['/c', 'echo oops 1>&2 & exit 3']);
-  checkEquals('exit code reported', failing.exitCode, 3);
-  check('stderr captured', failing.stderr.contains('oops'));
+  checkEquals('exit code is reported', failing.exitCode, 3);
+  checkContains('stderr is captured', failing.stderr, 'oops');
+  checkEquals('stdout stays empty on stderr-only run', failing.stdout.trim(), '');
+
+  final quiet = await runHidden('cmd.exe', ['/c', 'exit 0']);
+  checkEquals('silent run exit code', quiet.exitCode, 0);
+  checkEquals('silent run prints nothing', quiet.stdout, '');
 
   final missing = await runHidden('definitely-not-a-real-binary.exe', const []);
-  check('missing binary does not throw', missing.exitCode != 0);
+  check('missing binary fails instead of throwing', missing.exitCode != 0);
+  checkContains('missing binary explains itself', missing.stderr, 'CreateProcess');
+
+  final spaced = await runHidden('cmd.exe', ['/c', 'echo', 'a b']);
+  checkEquals('an argument with a space is quoted for the child',
+      spaced.stdout.trim(), '"a b"');
 
   final ps = await runPowerShell('Write-Output "ps-ok"');
-  check('powershell runs hidden', ps.stdout.contains('ps-ok'));
+  checkContains('powershell runs hidden', ps.stdout, 'ps-ok');
+
+  final cyrillic = await runPowerShell('Write-Output "привет мир"');
+  checkEquals(
+    'cyrillic survives -EncodedCommand',
+    cyrillic.stdout.trim(),
+    'привет мир',
+  );
+
+  final cyrillicBuilt = await runPowerShell('Write-Output ("привет " + "мир")');
+  checkEquals(
+    'cyrillic literals are not mojibake',
+    cyrillicBuilt.stdout.trim(),
+    'привет мир',
+  );
+
+  final long =
+      await runHidden('cmd.exe', ['/c', 'for /L %i in (1,1,20000) do @echo line%i']);
+  checkEquals('long output is complete', long.lines.length, 20000);
+  checkEquals('long output keeps the first line', long.lines.first, 'line1');
+  checkEquals('long output keeps the last line', long.lines.last, 'line20000');
+
+  final slow = await runHidden(
+    'cmd.exe',
+    ['/c', 'ping -n 6 127.0.0.1 > nul'],
+    timeout: const Duration(milliseconds: 300),
+  );
+  checkEquals('timeout kills the child', slow.exitCode, -2);
 }
 
+// ---- 2. the native heap --------------------------------------------------------
+
+void testNativeHeap() {
+  section('[native heap]');
+
+  final cell = NativeHeap.alloc<Uint32>(4);
+  cell.value = 0xDEADBEEF;
+  checkEquals('write and read a 32-bit cell', cell.value, 0xDEADBEEF);
+  NativeHeap.free(cell);
+
+  NativeHeap.free(nullptr);
+  check('free(nullptr) is safe', true);
+
+  final view = NativeHeap.alloc<Uint8>(8);
+  view.asTypedList(8).setAll(0, [1, 2, 3, 4, 5, 6, 7, 8]);
+  checkEquals('typed list view of a block', view.asTypedList(8).join(','),
+      '1,2,3,4,5,6,7,8');
+  NativeHeap.free(view);
+
+  var cycles = true;
+  for (var i = 0; i < 2000; i++) {
+    final block = NativeHeap.alloc<Uint32>(4);
+    block.value = i;
+    if (block.value != i) {
+      cycles = false;
+      break;
+    }
+    NativeHeap.free(block);
+  }
+  check('2000 alloc/free cycles stay consistent', cycles);
+}
+
+// ---- 3. the radio script -------------------------------------------------------
+
+void testRadioScript() {
+  section('[radio script]');
+
+  final state = buildRadioStateScript();
+  checkMissing('state script has no leftover mode', state, '__MODE__');
+  checkMissing('state script has no leftover kind', state, '__KIND__');
+  checkContains('state script asks for the radios', state, 'GetRadiosAsync');
+  checkContains('state script requests access', state, 'RequestAccessAsync');
+  checkContains('state script lists the adapter', state, 'Get-NetAdapter');
+  checkContains('state script reports every radio', state, "'radio|'");
+  checkContains('state script forces UTF-8 output', state,
+      '[Console]::OutputEncoding');
+  checkContains('state script is fail-soft', state, r"$ErrorActionPreference");
+
+  final on = buildRadioSetScript(kind: 'WiFi', on: true);
+  checkContains('set script carries the radio kind', on, "'WiFi'");
+  checkContains('set script carries the wanted state', on, "'On'");
+  checkMissing('set script has no leftover state', on, '__STATE__');
+  checkContains('set script calls SetStateAsync', on, 'SetStateAsync');
+
+  final off = buildRadioSetScript(kind: 'Bluetooth', on: false);
+  checkContains('set script can switch off', off, "'Off'");
+  checkContains('set script can reach bluetooth', off, "'Bluetooth'");
+}
+
+// ---- 4. the radio line protocol ------------------------------------------------
+
+RadioSnapshot _parse(String stdout) => RadioSnapshot.parse(
+      HiddenResult(exitCode: 0, stdout: stdout, stderr: ''),
+    );
+
 void testRadioParsing() {
-  print('[radio parsing]');
-  const output = '''
+  section('[radio parsing]');
+
+  const full = '''
 access=Allowed
 count=2
 radio|WiFi|Intel(R) Wi-Fi 6E AX211|On
 radio|Bluetooth|Intel(R) Wireless Bluetooth(R)|Off
 adapter|Wi-Fi|Up|Connected
 ''';
-  final snapshot = RadioSnapshot.parse(
-    const HiddenResult(exitCode: 0, stdout: output, stderr: ''),
-  );
-  checkEquals('access parsed', snapshot.access, 'Allowed');
+  final snapshot = _parse(full);
+  checkEquals('access line parsed', snapshot.access, 'Allowed');
 
   final wifi = snapshot.statusOf(RadioKind.wifi);
   checkEquals('wifi state', wifi.state, RadioState.on);
-  checkEquals('wifi name', wifi.deviceName, 'Intel(R) Wi-Fi 6E AX211');
+  checkEquals('wifi radio name', wifi.deviceName, 'Intel(R) Wi-Fi 6E AX211');
   checkEquals('wifi adapter name', wifi.adapterName, 'Wi-Fi');
-  check('wifi connected', wifi.connected);
-  check('wifi can be toggled', wifi.canToggle);
+  check('wifi reports the link up', wifi.connected);
+  check('wifi can be switched by the shell', wifi.canToggle);
 
-  final bt = snapshot.statusOf(RadioKind.bluetooth);
-  checkEquals('bluetooth state', bt.state, RadioState.off);
-  check('bluetooth not connected', !bt.connected);
+  final bluetooth = snapshot.statusOf(RadioKind.bluetooth);
+  checkEquals('bluetooth state', bluetooth.state, RadioState.off);
+  check('bluetooth has no link', !bluetooth.connected);
+  check('bluetooth can be switched by the shell', bluetooth.canToggle);
 
-  const empty = 'access=Allowed\ncount=0\n';
-  final blank = RadioSnapshot.parse(
-    const HiddenResult(exitCode: 0, stdout: empty, stderr: ''),
+  checkEquals(
+    'CRLF output parses the same',
+    _parse(full.replaceAll('\n', '\r\n')).statusOf(RadioKind.wifi).state,
+    RadioState.on,
   );
   checkEquals(
-    'no radios means unavailable',
-    blank.statusOf(RadioKind.wifi).state,
+    'padded lines are tolerated',
+    _parse('  access=Allowed  \n  radio|WiFi|Wi-Fi|On  \n')
+        .statusOf(RadioKind.wifi)
+        .state,
+    RadioState.on,
+  );
+
+  checkEquals(
+    'no radios at all means unavailable',
+    _parse('access=Allowed\ncount=0\n').statusOf(RadioKind.wifi).state,
     RadioState.unavailable,
   );
 
-  const disabled = 'access=Allowed\ncount=1\nradio|WiFi|Wi-Fi|On\nadapter|Wi-Fi|Disabled|Disconnected\n';
-  final off = RadioSnapshot.parse(
-    const HiddenResult(exitCode: 0, stdout: disabled, stderr: ''),
-  );
   checkEquals(
-    'disabled adapter reads as off',
-    off.statusOf(RadioKind.wifi).state,
-    RadioState.off,
-  );
-
-  const blocked =
-      'access=Allowed\ncount=1\nradio|WiFi|Wi-Fi|DisabledBySystem\n';
-  final blockedSnapshot = RadioSnapshot.parse(
-    const HiddenResult(exitCode: 0, stdout: blocked, stderr: ''),
-  );
-  checkEquals(
-    'policy-blocked radio',
-    blockedSnapshot.statusOf(RadioKind.wifi).state,
+    'policy-disabled radio is blocked',
+    _parse('radio|WiFi|Wi-Fi|DisabledBySystem\n').statusOf(RadioKind.wifi).state,
     RadioState.blocked,
   );
-}
+  checkEquals(
+    'user-disabled radio is blocked',
+    _parse('radio|WiFi|Wi-Fi|DisabledByUser\n').statusOf(RadioKind.wifi).state,
+    RadioState.blocked,
+  );
+  checkEquals(
+    'unknown radio state stays unknown',
+    _parse('radio|WiFi|Wi-Fi|SomethingNew\n').statusOf(RadioKind.wifi).state,
+    RadioState.unknown,
+  );
 
-Future<void> testRadioScript() async {
-  print('[radio script]');
-  final result = await runPowerShell(buildRadioStateScript());
-  check('state script runs', result.exitCode == 0 || result.stdout.isNotEmpty);
+  checkEquals(
+    'disabled adapter reads as off',
+    _parse('radio|WiFi|Wi-Fi|On\nadapter|Wi-Fi|Disabled|Disconnected\n')
+        .statusOf(RadioKind.wifi)
+        .state,
+    RadioState.off,
+  );
   check(
-    'state script reports access or an error',
-    result.stdout.contains('access=') || result.stdout.contains('err|'),
+    'disabled adapter is not connected',
+    !_parse('adapter|Wi-Fi|Disabled|Disconnected\n')
+        .statusOf(RadioKind.wifi)
+        .connected,
+  );
+
+  final adapterOnly = _parse('adapter|Wi-Fi|Up|Connected\n');
+  checkEquals(
+    'adapter without the radio API still reads on',
+    adapterOnly.statusOf(RadioKind.wifi).state,
+    RadioState.on,
+  );
+  check('adapter-only has no radio to switch', !adapterOnly.statusOf(RadioKind.wifi).canToggle);
+  checkEquals(
+    'adapter-only is connected',
+    adapterOnly.statusOf(RadioKind.wifi).connected,
+    true,
+  );
+  checkEquals(
+    'down adapter is still on but not connected',
+    _parse('adapter|Wi-Fi|Down|Disconnected\n').statusOf(RadioKind.wifi).state,
+    RadioState.on,
+  );
+
+  checkEquals(
+    'radio without adapter has no link',
+    _parse('radio|WiFi|Wi-Fi|On\n').statusOf(RadioKind.wifi).connected,
+    false,
+  );
+  checkEquals(
+    'radio without adapter has no adapter name',
+    _parse('radio|WiFi|Wi-Fi|On\n').statusOf(RadioKind.wifi).adapterName,
+    null,
+  );
+
+  checkEquals(
+    'error line is surfaced',
+    _parse('err|no radio api\n').error,
+    'no radio api',
+  );
+  checkEquals(
+    'garbage lines are ignored',
+    _parse('hello\nworld\nradio|WiFi\nadapter|x|y\n').statusOf(RadioKind.wifi).state,
+    RadioState.unavailable,
+  );
+  checkEquals(
+    'an unknown radio kind falls back to wifi',
+    _parse('radio|MobileBroadband|LTE|On\n').statusOf(RadioKind.wifi).state,
+    RadioState.on,
   );
 }
+
+void testRadioLabels() {
+  section('[radio labels]');
+
+  checkEquals('wifi label', RadioKind.wifi.label, 'Wi-Fi');
+  checkEquals('bluetooth label', RadioKind.bluetooth.label, 'Bluetooth');
+  checkEquals('wifi api kind', RadioKind.wifi.winRtKind, 'WiFi');
+  checkEquals('bluetooth api kind', RadioKind.bluetooth.winRtKind, 'Bluetooth');
+  checkEquals('wifi fallback page', RadioKind.wifi.settingsUri,
+      'ms-settings:network-wifi');
+  checkEquals('bluetooth fallback page', RadioKind.bluetooth.settingsUri,
+      'ms-settings:bluetooth');
+
+  checkEquals('on label', RadioState.on.label, 'Включено');
+  checkEquals('off label', RadioState.off.label, 'Выключено');
+  checkEquals('blocked label', RadioState.blocked.label, 'Отключено системой');
+  checkEquals('unknown label', RadioState.unknown.label, 'Неизвестно');
+  checkEquals('unavailable label', RadioState.unavailable.label,
+      'Устройство не найдено');
+
+  const on = RadioStatus(kind: RadioKind.wifi, state: RadioState.on);
+  const onLinked = RadioStatus(
+    kind: RadioKind.wifi,
+    state: RadioState.on,
+    connected: true,
+  );
+  const off = RadioStatus(kind: RadioKind.wifi, state: RadioState.off);
+  checkEquals('status label on', on.label, 'Включено');
+  checkEquals('status label on and linked', onLinked.label, 'Включено, подключено');
+  checkEquals('status label off', off.label, 'Выключено');
+  check('isOn is true for on', on.isOn);
+  check('isOn is false for off', !off.isOn);
+}
+
+// ---- 5. the phrase matcher -----------------------------------------------------
+
+typedef _Row = ({
+  String phrase,
+  AssistantIntent intent,
+  Map<String, Object?> params,
+});
 
 void testCommandParser() {
-  print('[command parser]');
+  section('[command parser]');
 
-  ParsedCommand? parse(String text) => parseCommand(text);
+  final rows = <_Row>[
+    // radios
+    (phrase: 'включи вайфай', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'выключи вайфай', intent: AssistantIntent.toggleWifi, params: {'on': false}),
+    (phrase: 'вайфай включи', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'вруби вайфай', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'выруби вайфай', intent: AssistantIntent.toggleWifi, params: {'on': false}),
+    (phrase: 'включи wi-fi', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'включи wi fi', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'включи вай-фай', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'включи блютуз', intent: AssistantIntent.toggleBluetooth, params: {'on': true}),
+    (phrase: 'включи блютус', intent: AssistantIntent.toggleBluetooth, params: {'on': true}),
+    (phrase: 'выключи bluetooth', intent: AssistantIntent.toggleBluetooth, params: {'on': false}),
+    (phrase: 'выруби блютуз', intent: AssistantIntent.toggleBluetooth, params: {'on': false}),
+    (phrase: 'ВКЛЮЧИ ВАЙФАЙ', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: 'Включи, вайфай!', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    (phrase: '  включи   вайфай  ', intent: AssistantIntent.toggleWifi, params: {'on': true}),
+    // volume
+    (phrase: 'громкость 40', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
+    (phrase: 'громкость 40%', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
+    (phrase: 'громкость 40 процентов', intent: AssistantIntent.setVolume, params: {'value': 0.4}),
+    (phrase: 'поставь громкость 50', intent: AssistantIntent.setVolume, params: {'value': 0.5}),
+    (phrase: 'сделай громкость 25', intent: AssistantIntent.setVolume, params: {'value': 0.25}),
+    (phrase: 'громкость 0', intent: AssistantIntent.setVolume, params: {'value': 0.0}),
+    (phrase: 'громкость 100', intent: AssistantIntent.setVolume, params: {'value': 1.0}),
+    (phrase: 'на 30 процентов громкость', intent: AssistantIntent.setVolume, params: {'value': 0.3}),
+    (phrase: 'звук 30', intent: AssistantIntent.setVolume, params: {'value': 0.3}),
+    (phrase: 'громкость пятьдесят', intent: AssistantIntent.setVolume, params: {'value': 0.5}),
+    (phrase: 'громкость сорок пять', intent: AssistantIntent.setVolume, params: {'value': 0.45}),
+    (phrase: 'громкость сто', intent: AssistantIntent.setVolume, params: {'value': 1.0}),
+    (phrase: 'громкость двадцать', intent: AssistantIntent.setVolume, params: {'value': 0.2}),
+    (phrase: 'прибавь громкость', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'убавь громкость', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    (phrase: 'прибавь звук', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'убавь звук', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    (phrase: 'громче', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'сделай громче', intent: AssistantIntent.adjustVolume, params: {'direction': 1.0}),
+    (phrase: 'потише', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    (phrase: 'тише', intent: AssistantIntent.adjustVolume, params: {'direction': -1.0}),
+    // mute
+    (phrase: 'заглуши звук', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'выключи звук', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'выруби звук', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'без звука', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'mute', intent: AssistantIntent.setMute, params: {'muted': true}),
+    (phrase: 'включи звук', intent: AssistantIntent.setMute, params: {'muted': false}),
+    (phrase: 'верни звук', intent: AssistantIntent.setMute, params: {'muted': false}),
+    (phrase: 'разглуши', intent: AssistantIntent.setMute, params: {'muted': false}),
+    (phrase: 'звук включи', intent: AssistantIntent.setMute, params: {'muted': false}),
+    // built-in settings
+    (phrase: 'открой настройки звука', intent: AssistantIntent.openBuiltInSection, params: {'section': 'sound'}),
+    (phrase: 'настройки звука', intent: AssistantIntent.openBuiltInSection, params: {'section': 'sound'}),
+    (phrase: 'покажи настройки вайфай', intent: AssistantIntent.openBuiltInSection, params: {'section': 'wifi'}),
+    (phrase: 'настройки блютуза', intent: AssistantIntent.openBuiltInSection, params: {'section': 'bluetooth'}),
+    (phrase: 'настройки блютус', intent: AssistantIntent.openBuiltInSection, params: {'section': 'bluetooth'}),
+    (phrase: 'настройки яркости', intent: AssistantIntent.openBuiltInSection, params: {'section': 'display'}),
+    (phrase: 'настройки экрана', intent: AssistantIntent.openBuiltInSection, params: {'section': 'display'}),
+    (phrase: 'открой настройки мыши', intent: AssistantIntent.openBuiltInSection, params: {'section': 'input'}),
+    (phrase: 'настройки клавиатуры', intent: AssistantIntent.openBuiltInSection, params: {'section': 'input'}),
+    (phrase: 'настройки приложений', intent: AssistantIntent.openBuiltInSection, params: {'section': 'apps'}),
+    (phrase: 'настройки уведомлений', intent: AssistantIntent.openBuiltInSection, params: {'section': 'apps'}),
+    (phrase: 'настройки обновлений', intent: AssistantIntent.openBuiltInSection, params: {'section': 'security'}),
+    (phrase: 'настройки паролей', intent: AssistantIntent.openBuiltInSection, params: {'section': 'security'}),
+    (phrase: 'настройки языка', intent: AssistantIntent.openBuiltInSection, params: {'section': 'language'}),
+    (phrase: 'настройки времени', intent: AssistantIntent.openBuiltInSection, params: {'section': 'language'}),
+    (phrase: 'настройки обоев', intent: AssistantIntent.openBuiltInSection, params: {'section': 'appearance'}),
+    (phrase: 'настройки темы', intent: AssistantIntent.openBuiltInSection, params: {'section': 'appearance'}),
+    (phrase: 'открой настройки', intent: AssistantIntent.openBuiltInSection, params: {'section': 'root'}),
+    // windows settings
+    (phrase: 'открой параметры windows', intent: AssistantIntent.openWindowsSettings, params: {'uri': 'ms-settings:'}),
+    (phrase: 'настройки windows', intent: AssistantIntent.openWindowsSettings, params: {'uri': 'ms-settings:'}),
+    // media
+    (phrase: 'пауза', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'играй', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'продолжи', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'возобнови', intent: AssistantIntent.mediaPlayPause, params: {}),
+    (phrase: 'следующий трек', intent: AssistantIntent.mediaNext, params: {}),
+    (phrase: 'следующая песня', intent: AssistantIntent.mediaNext, params: {}),
+    (phrase: 'предыдущий трек', intent: AssistantIntent.mediaPrevious, params: {}),
+    (phrase: 'предыдущая композиция', intent: AssistantIntent.mediaPrevious, params: {}),
+    // brightness
+    (phrase: 'сделай ярче', intent: AssistantIntent.adjustBrightness, params: {'direction': 1.0}),
+    (phrase: 'ярче', intent: AssistantIntent.adjustBrightness, params: {'direction': 1.0}),
+    (phrase: 'сделай темнее', intent: AssistantIntent.adjustBrightness, params: {'direction': -1.0}),
+    (phrase: 'яркость 60', intent: AssistantIntent.setBrightness, params: {'value': 0.6}),
+    (phrase: 'яркость 100', intent: AssistantIntent.setBrightness, params: {'value': 1.0}),
+    (phrase: 'яркость сто', intent: AssistantIntent.setBrightness, params: {'value': 1.0}),
+    // power
+    (phrase: 'заблокируй экран', intent: AssistantIntent.lock, params: {}),
+    (phrase: 'заблокируй компьютер', intent: AssistantIntent.lock, params: {}),
+    (phrase: 'усыпи компьютер', intent: AssistantIntent.sleep, params: {}),
+    (phrase: 'спящий режим', intent: AssistantIntent.sleep, params: {}),
+    (phrase: 'перезагрузи компьютер', intent: AssistantIntent.restart, params: {}),
+    (phrase: 'перезагрузка', intent: AssistantIntent.restart, params: {}),
+    (phrase: 'ребут', intent: AssistantIntent.restart, params: {}),
+    (phrase: 'выключи компьютер', intent: AssistantIntent.shutdown, params: {}),
+    (phrase: 'выключи пк', intent: AssistantIntent.shutdown, params: {}),
+    (phrase: 'заверши работу', intent: AssistantIntent.shutdown, params: {}),
+    (phrase: 'выйти из системы', intent: AssistantIntent.signOut, params: {}),
+    (phrase: 'заверши сеанс', intent: AssistantIntent.signOut, params: {}),
+    (phrase: 'выход', intent: AssistantIntent.signOut, params: {}),
+  ];
 
-  checkEquals('включи вайфай', parse('включи вайфай')?.intent,
-      AssistantIntent.toggleWifi);
-  checkEquals('включи вайфай -> on', parse('включи вайфай')?.params['on'], true);
-  checkEquals('выключи вайфай -> off',
-      parse('выключи вайфай')?.params['on'], false);
-  checkEquals('переключи вайфай has no direction',
-      parse('переключи вайфай')?.params.containsKey('on'), false);
-  checkEquals('выключи блютуз', parse('выключи блютуз')?.intent,
-      AssistantIntent.toggleBluetooth);
-  checkEquals('wi-fi spelling', parse('включи wi-fi')?.intent,
-      AssistantIntent.toggleWifi);
+  for (final row in rows) {
+    final parsed = parseCommand(row.phrase);
+    checkEquals(
+      '«${row.phrase}» → ${row.intent.id}',
+      parsed?.intent,
+      row.intent,
+    );
+    for (final entry in row.params.entries) {
+      checkEquals(
+        '«${row.phrase}» ${entry.key} = ${entry.value}',
+        parsed?.params[entry.key],
+        entry.value,
+      );
+    }
+  }
 
-  checkEquals('громкость 40', parse('громкость 40')?.intent,
-      AssistantIntent.setVolume);
-  checkEquals('громкость 40 -> 0.4', parse('громкость 40')?.params['value'],
-      0.4);
-  checkEquals('поставь громкость 50 процентов',
-      parse('поставь громкость 50 процентов')?.params['value'], 0.5);
-  checkEquals('прибавь громкость', parse('прибавь громкость')?.intent,
-      AssistantIntent.adjustVolume);
-  checkEquals('прибавь громкость -> louder',
-      parse('прибавь громкость')?.params['direction'], 1.0);
-  checkEquals('убавь громкость -> quieter',
-      parse('убавь громкость')?.params['direction'], -1.0);
-  checkEquals('громче', parse('громче')?.params['direction'], 1.0);
-  checkEquals('тише', parse('тише')?.params['direction'], -1.0);
+  section('[command parser: what must not be understood]');
+  const notUnderstood = [
+    'абракадабра',
+    '',
+    '   ',
+    'просто текст',
+    'включи',
+    'вайфай',
+    'громкость',
+    'громкость 150',
+    'громкость 101',
+    'яркость 200',
+  ];
+  for (final phrase in notUnderstood) {
+    check('«$phrase» is not a command', parseCommand(phrase) == null);
+  }
 
-  checkEquals('заглуши звук', parse('заглуши звук')?.intent,
-      AssistantIntent.setMute);
-  checkEquals('заглуши звук -> muted',
-      parse('заглуши звук')?.params['muted'], true);
-  checkEquals('выключи звук -> muted',
-      parse('выключи звук')?.params['muted'], true);
-  checkEquals('включи звук -> unmuted',
-      parse('включи звук')?.params['muted'], false);
-
-  checkEquals('открой настройки звука', parse('открой настройки звука')?.intent,
-      AssistantIntent.openBuiltInSection);
-  checkEquals('настройки звука -> sound',
-      parse('открой настройки звука')?.params['section'], 'sound');
-  checkEquals('настройки блютуза -> bluetooth',
-      parse('настройки блютуза')?.params['section'], 'bluetooth');
-  checkEquals('настройки вайфай -> wifi',
-      parse('покажи настройки вайфай')?.params['section'], 'wifi');
-  checkEquals('параметры windows', parse('открой параметры windows')?.intent,
-      AssistantIntent.openWindowsSettings);
-
-  checkEquals('пауза', parse('пауза')?.intent, AssistantIntent.mediaPlayPause);
-  checkEquals('следующий трек', parse('следующий трек')?.intent,
-      AssistantIntent.mediaNext);
-  checkEquals('предыдущий трек', parse('предыдущий трек')?.intent,
-      AssistantIntent.mediaPrevious);
-
-  checkEquals('сделай ярче', parse('сделай ярче')?.intent,
-      AssistantIntent.adjustBrightness);
-  checkEquals('яркость 60', parse('яркость 60')?.params['value'], 0.6);
-
-  checkEquals('заблокируй экран', parse('заблокируй экран')?.intent,
-      AssistantIntent.lock);
-  checkEquals('усыпи компьютер', parse('усыпи компьютер')?.intent,
-      AssistantIntent.sleep);
-  checkEquals('перезагрузи компьютер', parse('перезагрузи компьютер')?.intent,
-      AssistantIntent.restart);
-  checkEquals('выключи компьютер', parse('выключи компьютер')?.intent,
-      AssistantIntent.shutdown);
-  checkEquals('выйти из системы', parse('выйти из системы')?.intent,
-      AssistantIntent.signOut);
-
-  // The rule that broke before: a sound command is never a power command.
-  checkEquals('выключи звук is not a shutdown',
-      parse('выключи звук')?.intent == AssistantIntent.shutdown, false);
-  checkEquals('выключи компьютер is not a mute',
-      parse('выключи компьютер')?.intent == AssistantIntent.setMute, false);
-  check('nonsense is not understood', parse('абракадабра') == null);
-  check('empty is not understood', parse('') == null);
+  section('[command parser: traps]');
+  checkEquals('«переключи вайфай» has no forced direction',
+      parseCommand('переключи вайфай')?.params.containsKey('on'), false);
+  checkEquals('«переключи блютуз» has no forced direction',
+      parseCommand('переключи блютуз')?.params.containsKey('on'), false);
+  checkEquals('«выключи звук» is a mute',
+      parseCommand('выключи звук')?.intent, AssistantIntent.setMute);
+  check('«выключи звук» is not a shutdown',
+      parseCommand('выключи звук')?.intent != AssistantIntent.shutdown);
+  check('«выключи компьютер» is not a mute',
+      parseCommand('выключи компьютер')?.intent != AssistantIntent.setMute);
+  check('«настройки звука» does not mute anything',
+      parseCommand('настройки звука')?.intent != AssistantIntent.setMute);
+  check('«выключи вайфай» is not a shutdown',
+      parseCommand('выключи вайфай')?.intent != AssistantIntent.shutdown);
+  check('«включи блютуз» is not a mute',
+      parseCommand('включи блютуз')?.intent != AssistantIntent.setMute);
+  check('«громкость 0» is allowed', parseCommand('громкость 0') != null);
+  check('«громкость 100» is allowed', parseCommand('громкость 100') != null);
 }
+
+// ---- 6. the router -------------------------------------------------------------
 
 Future<void> testRouter() async {
-  print('[router]');
-  final sink = _RecordingSink();
+  section('[router]');
+
+  final sink = _Recorder();
   final router = CommandRouter(sink: sink);
 
-  final reply = await router.run('прибавь громкость');
-  checkEquals('volume step reached the sink', sink.volumeSteps, [1.0]);
-  checkEquals('reply names the volume', reply, 'громкость 82');
+  checkEquals('volume command reply', await router.run('громкость 40'), 'громкость 40');
+  checkEquals('volume command reaches the sink', sink.volumes, [0.4]);
 
-  await router.run('выключи звук');
-  checkEquals('mute reached the sink', sink.mutes, [true]);
+  checkEquals('volume step reply', await router.run('прибавь громкость'), 'громкость 42');
+  checkEquals('volume step reaches the sink', sink.steps, [1.0]);
 
-  await router.run('включи вайфай');
-  checkEquals('wifi reached the sink', sink.radios, [(RadioKind.wifi, true)]);
+  checkEquals('mute reply', await router.run('заглуши звук'), 'звук заглушён');
+  checkEquals('unmute reply', await router.run('включи звук'), 'звук включён');
+  checkEquals('mute reaches the sink', sink.mutes, [true, false]);
 
-  await router.run('выключи блютуз');
-  checkEquals('bluetooth reached the sink', sink.radios.last,
-      (RadioKind.bluetooth, false));
+  checkEquals('wifi on reply', await router.run('включи вайфай'), 'Wi-Fi: включено');
+  checkEquals(
+    'wifi off reply',
+    await router.run('выключи вайфай'),
+    'Wi-Fi: выключено',
+  );
+  checkEquals('bluetooth off reply', await router.run('выключи блютуз'),
+      'Bluetooth: выключено');
+  checkEquals('radios reach the sink', sink.radios, [
+    (RadioKind.wifi, true),
+    (RadioKind.wifi, false),
+    (RadioKind.bluetooth, false),
+  ]);
 
-  await router.run('открой настройки звука');
-  checkEquals('built-in section reached the sink', sink.sections, ['sound']);
+  checkEquals('built-in section reply', await router.run('открой настройки звука'),
+      'открыл настройки');
+  checkEquals('built-in section reaches the sink', sink.sections, ['sound']);
 
-  await router.run('открой параметры windows');
-  checkEquals('windows page reached the sink', sink.pages, ['ms-settings:']);
+  checkEquals('windows page reply', await router.run('открой параметры windows'),
+      'открыл параметры windows');
+  checkEquals('windows page reaches the sink', sink.pages, ['ms-settings:']);
 
+  checkEquals('brightness reply', await router.run('яркость 60'), 'яркость 60');
+  checkEquals('brightness reaches the sink', sink.brightness, 0.6);
+  checkEquals('brightness step reply', await router.run('сделай ярче'),
+      'яркость изменена');
+  checkEquals('brightness step reaches the sink', sink.brightness, 0.65);
+
+  checkEquals('play pause reply', await router.run('пауза'), 'пауза');
+  checkEquals('next reply', await router.run('следующий трек'), 'следующий трек');
+  checkEquals('previous reply', await router.run('предыдущий трек'),
+      'предыдущий трек');
+  checkEquals('media reaches the sink', sink.media, ['playPause', 'next', 'previous']);
+
+  checkEquals('lock reply', await router.run('заблокируй экран'),
+      'экран заблокирован');
+  checkEquals('sleep reply', await router.run('усыпи компьютер'), 'спящий режим');
+  checkEquals('sign out reply', await router.run('выйти из системы'),
+      'выход из системы');
+  checkEquals('restart reply', await router.run('перезагрузи компьютер'),
+      'перезагрузка');
+  checkEquals('shutdown reply', await router.run('выключи компьютер'), 'выключение');
+  checkEquals('power reaches the sink', sink.power,
+      ['lock', 'sleep', 'signOut', 'restart', 'shutdown']);
+
+  final before = sink.totalCalls;
   checkEquals('unknown command says so', await router.run('абракадабра'),
       'не понял команду');
+  checkEquals('unknown command touches nothing', sink.totalCalls, before);
 }
+
+// ---- 7. the assistant's prompt and catalog -------------------------------------
 
 void testPromptCatalog() {
-  print('[prompt]');
-  final catalogIds = assistantIntents.map((s) => s.intent.id).toSet();
+  section('[prompt and catalog]');
+
+  final ids = assistantIntents.map((spec) => spec.intent.id).toList();
+  checkEquals('catalog ids are unique', ids.toSet().length, ids.length);
+
+  final catalogIds = ids.toSet();
+  final enumIds = AssistantIntent.values
+      .where((intent) => intent != AssistantIntent.unknown)
+      .map((intent) => intent.id)
+      .toSet();
+  checkEquals('catalog covers the enum', catalogIds, enumIds);
+
   for (final spec in assistantIntents) {
-    check(
-      'catalog entry ${spec.intent.id} has examples',
-      spec.examples.isNotEmpty,
-    );
-    check(
-      'catalog entry ${spec.intent.id} says what it does',
-      spec.action.isNotEmpty,
-    );
+    check('${spec.intent.id} has examples', spec.examples.isNotEmpty);
+    check('${spec.intent.id} says what it does', spec.action.isNotEmpty);
+    checkContains('prompt names ${spec.intent.id}', assistantSystemPrompt,
+        spec.intent.id);
+    final fallback = spec.fallbackUri;
+    if (fallback != null) {
+      check('${spec.intent.id} fallback is an ms-settings page',
+          fallback.startsWith('ms-settings:'));
+    }
+    for (final example in spec.examples) {
+      final parsed = parseCommand(example);
+      checkEquals(
+        'catalog example «$example» lands on ${spec.intent.id}',
+        parsed?.intent,
+        spec.intent,
+      );
+    }
   }
-  for (final intent in AssistantIntent.values) {
-    if (intent == AssistantIntent.unknown) continue;
-    check('catalog knows ${intent.id}', catalogIds.contains(intent.id));
-    check(
-      'prompt mentions ${intent.id}',
-      assistantSystemPrompt.contains(intent.id),
-    );
-  }
-  check(
-    'prompt forbids closing the desktop for sound',
-    assistantSystemPrompt.contains('никогда не закрывает'),
-  );
-  check(
-    'prompt keeps the built-in settings first',
-    assistantSystemPrompt.contains('встроенных настройках'),
-  );
+
+  checkContains('prompt asks for JSON', assistantSystemPrompt, '{"intent"');
+  checkContains('prompt says the shell owns its parameters',
+      assistantSystemPrompt, 'встроенных настройках');
+  checkContains('prompt keeps ms-settings as the fallback',
+      assistantSystemPrompt, 'ms-settings:<uri>');
+  checkContains('prompt forbids closing the desktop for sound',
+      assistantSystemPrompt, 'никогда не закрывает');
+  checkContains('prompt asks for confirmation before power actions',
+      assistantSystemPrompt, 'подтверждения');
+  checkContains('prompt tells the model to re-read the radio state',
+      assistantSystemPrompt, 'перечитать');
+  checkMissing('prompt has no "as an AI" filler', assistantSystemPrompt,
+      'as an AI');
+  check('prompt is long enough to be a prompt',
+      assistantSystemPrompt.length > 1500);
 }
+
+// ---- 8. sound, read-only --------------------------------------------------------
 
 void testSoundControl() {
-  print('[sound control]');
+  section('[sound control]');
+
   final sound = SoundControl.instance;
+  sound.refresh();
   final volume = sound.volume;
-  check('volume readable', volume >= 0.0 && volume <= 1.0);
-  check('mute state readable', sound.muted == true || sound.muted == false);
-  checkEquals('percent matches volume', sound.percent, (volume * 100).round());
+  check('volume is in range', volume >= 0.0 && volume <= 1.0);
+  checkEquals('percent matches the volume', sound.percent, (volume * 100).round());
+  check('mute reads as a bool', sound.muted == true || sound.muted == false);
+  checkClose(
+    'the mirror matches the endpoint',
+    volume,
+    VolumeControl.instance.volume,
+    1e-6,
+  );
+
+  var notified = 0;
+  void listener() => notified++;
+  sound.addListener(listener);
+  sound.refresh();
+  checkEquals('refresh notifies listeners', notified, 1);
+  sound.removeListener(listener);
+  sound.refresh();
+  checkEquals('a removed listener is not called', notified, 1);
 }
 
-// ---- the recorder -------------------------------------------------------------
+// ---- 9. the sound path cannot touch the window ---------------------------------
 
-class _RecordingSink implements SystemCommandSink {
-  final List<double> volumeSteps = [];
+void testSourceGuards() {
+  section('[window guards]');
+
+  const forbidden = ['withdraw(', 'iconify(', 'onClose', 'onMinimize'];
+  for (final path in ['lib/command_router.dart', 'lib/sound_control.dart']) {
+    final file = File(path);
+    check('$path is on disk', file.existsSync());
+    if (!file.existsSync()) continue;
+    final source = file.readAsStringSync();
+    for (final needle in forbidden) {
+      checkMissing('$path has no "$needle"', source, needle);
+    }
+  }
+}
+
+// ---- the recorder ---------------------------------------------------------------
+
+class _Recorder implements SystemCommandSink {
+  final List<double> volumes = [];
+  final List<double> steps = [];
   final List<bool> mutes = [];
   final List<(RadioKind, bool)> radios = [];
   final List<String> sections = [];
   final List<String> pages = [];
+  final List<String> media = [];
+  final List<String> power = [];
+  double? brightness;
   double volume = 0.8;
+  bool muted = false;
+
+  int get totalCalls =>
+      volumes.length +
+      steps.length +
+      mutes.length +
+      radios.length +
+      sections.length +
+      pages.length +
+      media.length +
+      power.length +
+      (brightness == null ? 0 : 1);
 
   @override
   Future<double> setVolume(double value) async {
+    volumes.add(value);
     volume = value;
-    return value;
+    return volume;
   }
 
   @override
   Future<double> stepVolume(double direction) async {
-    volumeSteps.add(direction);
+    steps.add(direction);
     volume = (volume + 0.02 * direction).clamp(0.0, 1.0);
     return volume;
   }
 
   @override
-  Future<bool> setMuted(bool muted) async {
-    mutes.add(muted);
+  Future<bool> setMuted(bool value) async {
+    mutes.add(value);
+    muted = value;
     return muted;
   }
 
@@ -352,32 +729,36 @@ class _RecordingSink implements SystemCommandSink {
   }
 
   @override
-  Future<void> setBrightness(double value) async {}
+  Future<void> setBrightness(double value) async {
+    brightness = value;
+  }
 
   @override
-  Future<void> adjustBrightness(double direction) async {}
+  Future<void> adjustBrightness(double direction) async {
+    brightness = ((brightness ?? 0.6) + 0.05 * direction).clamp(0.0, 1.0);
+  }
 
   @override
-  Future<void> mediaPlayPause() async {}
+  Future<void> mediaPlayPause() async => media.add('playPause');
 
   @override
-  Future<void> mediaNext() async {}
+  Future<void> mediaNext() async => media.add('next');
 
   @override
-  Future<void> mediaPrevious() async {}
+  Future<void> mediaPrevious() async => media.add('previous');
 
   @override
-  Future<void> lockScreen() async {}
+  Future<void> lockScreen() async => power.add('lock');
 
   @override
-  Future<void> sleepMachine() async {}
+  Future<void> sleepMachine() async => power.add('sleep');
 
   @override
-  Future<void> signOut() async {}
+  Future<void> signOut() async => power.add('signOut');
 
   @override
-  Future<void> restartMachine() async {}
+  Future<void> restartMachine() async => power.add('restart');
 
   @override
-  Future<void> shutdownMachine() async {}
+  Future<void> shutdownMachine() async => power.add('shutdown');
 }

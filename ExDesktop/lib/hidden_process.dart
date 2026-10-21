@@ -218,9 +218,6 @@ Future<HiddenResult> runPowerShell(
   String script, {
   Duration timeout = const Duration(seconds: 20),
 }) {
-  final encoded = base64.encode(utf8.encode(script).expand(
-        (b) => <int>[b, 0],
-      ).toList());
   return runHidden(
     'powershell.exe',
     [
@@ -229,10 +226,25 @@ Future<HiddenResult> runPowerShell(
       '-ExecutionPolicy',
       'Bypass',
       '-EncodedCommand',
-      encoded,
+      _encodeCommand(script),
     ],
     timeout: timeout,
   );
+}
+
+/// -EncodedCommand wants the script as UTF-16LE code units, base64'd.
+///
+/// It is not UTF-8: encoding the text as UTF-8 and zero-padding each byte
+/// turns every Cyrillic character into two junk ones, and PowerShell happily
+/// runs the garbage it receives.
+String _encodeCommand(String script) {
+  final units = script.codeUnits;
+  final bytes = <int>[];
+  for (final unit in units) {
+    bytes.add(unit & 0xFF);
+    bytes.add((unit >> 8) & 0xFF);
+  }
+  return base64.encode(bytes);
 }
 
 HiddenResult _runHiddenSync(

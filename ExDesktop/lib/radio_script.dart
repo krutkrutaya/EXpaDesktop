@@ -22,6 +22,10 @@
 const String radioScriptTemplate = r'''
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# The pipe carries UTF-8: adapter names are localized on a Russian Windows,
+# and a mangled name would break the netsh fallback.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $mode = '__MODE__'
 $kind = '__KIND__'
 $want = '__STATE__'

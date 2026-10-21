@@ -259,8 +259,12 @@ class RadioSnapshot {
       } else if (line.startsWith('radio|')) {
         final parts = line.split('|');
         if (parts.length < 4) continue;
-        radios[parts[1]] = RadioStatus(
-          kind: _kindOf(parts[1]),
+        // Key by the kind the shell understands, so a radio Windows knows
+        // about but the shell does not (mobile broadband) still lands in the
+        // right bucket instead of vanishing.
+        final kind = _kindOf(parts[1]);
+        radios[kind.winRtKind] = RadioStatus(
+          kind: kind,
           state: _stateOf(parts[3]),
           deviceName: parts[2],
           canToggle: true,
@@ -284,6 +288,16 @@ class RadioSnapshot {
         continue;
       }
       var state = radio?.state ?? RadioState.unknown;
+      if (radio == null && adapter != null) {
+        // No radio API (an old or locked-down machine): the adapter's own
+        // status is all we have. "Disabled" is off; a live adapter is on,
+        // whether or not it is associated with a network.
+        state = switch (adapter.status.toLowerCase()) {
+          'up' || 'down' => RadioState.on,
+          'disabled' => RadioState.off,
+          _ => RadioState.unknown,
+        };
+      }
       if (adapter != null && adapter.status.toLowerCase() == 'disabled') {
         state = RadioState.off;
       }

@@ -175,7 +175,7 @@ ParsedCommand? parseCommand(String utterance) {
 List<String> _words(String utterance) => utterance
     .toLowerCase()
     .replaceAll('ё', 'е')
-    .replaceAll(RegExp(r'[^a-zа-я0-9% ]'), ' ')
+    .replaceAll(RegExp(r'[^a-zа-я0-9 ]'), ' ')
     .split(RegExp(r'\s+'))
     .where((w) => w.isNotEmpty)
     .toList();
@@ -191,14 +191,63 @@ bool _stem(List<String> words, String stem) =>
 bool _hasAnyPrefix(List<String> words, List<String> prefixes) =>
     words.any((w) => prefixes.any((p) => w.startsWith(p)));
 
-bool _hasNumber(List<String> words) => words.any((w) => int.tryParse(w) != null);
+/// Numbers the way people say them out loud.
+const Map<String, int> _numeralWords = {
+  'ноль': 0,
+  'один': 1,
+  'одну': 1,
+  'одна': 1,
+  'два': 2,
+  'две': 2,
+  'три': 3,
+  'четыре': 4,
+  'пять': 5,
+  'шесть': 6,
+  'семь': 7,
+  'восемь': 8,
+  'девять': 9,
+  'десять': 10,
+  'одиннадцать': 11,
+  'двенадцать': 12,
+  'тринадцать': 13,
+  'четырнадцать': 14,
+  'пятнадцать': 15,
+  'шестнадцать': 16,
+  'семнадцать': 17,
+  'восемнадцать': 18,
+  'девятнадцать': 19,
+  'двадцать': 20,
+  'тридцать': 30,
+  'сорок': 40,
+  'пятьдесят': 50,
+  'шестьдесят': 60,
+  'семьдесят': 70,
+  'восемьдесят': 80,
+  'девяносто': 90,
+  'сто': 100,
+};
 
+/// The first number in the phrase, digits or words: "40", "40%",
+/// "сорок", "двадцать пять", "сто".
 int? _number(List<String> words) {
-  for (final w in words) {
-    final value = int.tryParse(w);
-    if (value != null) return value;
+  var total = 0;
+  var seen = false;
+  for (final word in words) {
+    final digit = int.tryParse(word);
+    if (digit != null) {
+      total += digit;
+      seen = true;
+      continue;
+    }
+    final value = _numeralWords[word];
+    if (value != null) {
+      total += value;
+      seen = true;
+      continue;
+    }
+    if (seen) break;
   }
-  return null;
+  return seen ? total : null;
 }
 
 bool _mentionsSound(List<String> words) =>
@@ -214,7 +263,9 @@ bool _mentionsWifi(List<String> words) =>
     (_has(words, 'wi') && _has(words, 'fi'));
 
 bool _mentionsBluetooth(List<String> words) =>
-    _stem(words, 'блютуз') || _has(words, 'bluetooth');
+    _stem(words, 'блютуз') ||
+    _stem(words, 'блютус') ||
+    _has(words, 'bluetooth');
 
 bool _mentionsSettings(List<String> words) =>
     _stem(words, 'настройк') ||
@@ -226,11 +277,16 @@ ParsedCommand? _matchMute(List<String> words) {
       _hasAnyPrefix(words, ['заглуш', 'приглуш'])) {
     return const ParsedCommand(AssistantIntent.setMute, {'muted': true});
   }
+  // "разглуши" carries no object of its own: the word is the whole command.
+  if (_stem(words, 'разглуш')) {
+    return const ParsedCommand(AssistantIntent.setMute, {'muted': false});
+  }
   if (_mentionsSound(words)) {
-    if (_hasAnyPrefix(words, ['выключ'])) {
+    if (_hasAnyPrefix(words, ['выключ', 'выруб'])) {
       return const ParsedCommand(AssistantIntent.setMute, {'muted': true});
     }
-    if (_hasAnyPrefix(words, ['включ']) || _stem(words, 'разглуш')) {
+    if (_hasAnyPrefix(words, ['включ', 'вруб', 'верн']) ||
+        _stem(words, 'разглуш')) {
       return const ParsedCommand(AssistantIntent.setMute, {'muted': false});
     }
     if (_stem(words, 'без')) {
@@ -241,7 +297,7 @@ ParsedCommand? _matchMute(List<String> words) {
 }
 
 ParsedCommand? _matchVolume(List<String> words) {
-  final mentions = _mentionsVolume(words);
+  final mentions = _mentionsVolume(words) || _mentionsSound(words);
   final louder = _stem(words, 'громче') ||
       _stem(words, 'погромче') ||
       (mentions && _hasAnyPrefix(words, ['прибав', 'увелич', 'добав']));
@@ -256,26 +312,22 @@ ParsedCommand? _matchVolume(List<String> words) {
     return const ParsedCommand(AssistantIntent.adjustVolume, {'direction': -1.0});
   }
 
-  if (mentions && _hasNumber(words)) {
-    final percent = _number(words)!;
-    if (percent > 0 && percent <= 100) {
-      return ParsedCommand(AssistantIntent.setVolume, {
-        'value': (percent / 100).clamp(0.0, 1.0),
-      });
-    }
+  final percent = _number(words);
+  if (mentions && percent != null && percent >= 0 && percent <= 100) {
+    return ParsedCommand(AssistantIntent.setVolume, {
+      'value': (percent / 100).clamp(0.0, 1.0),
+    });
   }
   return null;
 }
 
 ParsedCommand? _matchBrightness(List<String> words) {
   final mentions = _stem(words, 'яркост') || _has(words, 'brightness');
-  if (mentions && _hasNumber(words)) {
-    final percent = _number(words)!;
-    if (percent >= 0 && percent <= 100) {
-      return ParsedCommand(AssistantIntent.setBrightness, {
-        'value': (percent / 100).clamp(0.0, 1.0),
-      });
-    }
+  final percent = _number(words);
+  if (mentions && percent != null && percent >= 0 && percent <= 100) {
+    return ParsedCommand(AssistantIntent.setBrightness, {
+      'value': (percent / 100).clamp(0.0, 1.0),
+    });
   }
   if (_stem(words, 'ярче')) {
     return const ParsedCommand(
@@ -331,10 +383,12 @@ ParsedCommand? _matchPower(List<String> words) {
       _stem(words, 'ноут') ||
       _stem(words, 'пк') ||
       _stem(words, 'машина');
-  if (machine && _hasAnyPrefix(words, ['выключ'])) {
+  if (machine && _hasAnyPrefix(words, ['выключ', 'выруб'])) {
     return const ParsedCommand(AssistantIntent.shutdown);
   }
-  if (_stem(words, 'выйти') || _stem(words, 'выход')) {
+  if (_stem(words, 'выйти') ||
+      _stem(words, 'выйд') ||
+      _stem(words, 'выход')) {
     return const ParsedCommand(AssistantIntent.signOut);
   }
   if (_stem(words, 'заверши') && _stem(words, 'сеанс')) {
@@ -395,15 +449,15 @@ ParsedCommand? _matchSettings(List<String> words) {
     });
   }
   if (_stem(words, 'язык') ||
-      _stem(words, 'время') ||
+      _stem(words, 'врем') ||
       _stem(words, 'регион')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
       'section': 'language',
     });
   }
-  if (_stem(words, 'обои') ||
+  if (_stem(words, 'обо') ||
       _stem(words, 'цвет') ||
-      _stem(words, 'тема') ||
+      _stem(words, 'тем') ||
       _stem(words, 'шрифт') ||
       _stem(words, 'оформлен')) {
     return const ParsedCommand(AssistantIntent.openBuiltInSection, {
@@ -420,8 +474,8 @@ ParsedCommand? _matchRadio(List<String> words) {
   final isBluetooth = _mentionsBluetooth(words);
   if (!isWifi && !isBluetooth) return null;
 
-  final on = _hasAnyPrefix(words, ['включ', 'подключ']);
-  final off = _hasAnyPrefix(words, ['выключ', 'отключ']);
+  final on = _hasAnyPrefix(words, ['включ', 'подключ', 'вруб']);
+  final off = _hasAnyPrefix(words, ['выключ', 'отключ', 'выруб']);
   final toggle = _hasAnyPrefix(words, ['переключ', 'перевкл']);
   if (!on && !off && !toggle) return null;
 

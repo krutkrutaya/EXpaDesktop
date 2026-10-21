@@ -101,7 +101,7 @@ const List<IntentSpec> assistantIntents = [
     examples: [
       'громкость 40',
       'поставь громкость 50 процентов',
-      'сделай громкость тише',
+      'сделай громкость 30',
     ],
     action: 'задать мастер-громкость через IAudioEndpointVolume, окна не '
         'открывать',
@@ -139,7 +139,7 @@ const List<IntentSpec> assistantIntents = [
     intent: AssistantIntent.openWindowsSettings,
     examples: [
       'открой параметры windows',
-      'покажи настройки видеокарты',
+      'настройки windows',
     ],
     action: 'открыть страницу Параметров Windows через ms-settings:<uri>, '
         'только если раздела нет во встроенных настройках',
@@ -147,9 +147,8 @@ const List<IntentSpec> assistantIntents = [
   IntentSpec(
     intent: AssistantIntent.setBrightness,
     examples: [
-      'сделай ярче',
-      'сделай темнее',
       'яркость 60',
+      'яркость 100',
     ],
     action: 'задать яркость через DDC/CI (native DLL), без окон',
   ),
@@ -168,12 +167,12 @@ const List<IntentSpec> assistantIntents = [
   ),
   IntentSpec(
     intent: AssistantIntent.mediaNext,
-    examples: ['следующий трек', 'дальше'],
+    examples: ['следующий трек', 'следующая песня'],
     action: 'медиа-клавиша next',
   ),
   IntentSpec(
     intent: AssistantIntent.mediaPrevious,
-    examples: ['предыдущий трек', 'назад'],
+    examples: ['предыдущий трек', 'предыдущая песня'],
     action: 'медиа-клавиша previous',
   ),
   IntentSpec(

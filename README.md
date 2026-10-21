@@ -128,8 +128,10 @@ ExDesktop/
 │   ├── music/                   # tracks and cover art
 │   └── icons/
 └── test/
+    ├── mock_harness.dart             # 🧪 shared check/report harness
+    ├── mock_all.dart                 # 🧪 everything, one total
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    └── system_mock_check.dart        # 🧪 138 system + assistant mock tests
+    └── system_mock_check.dart        # 🧪 412 system + assistant mock tests
 ```
 
 ## 🚀 Building
@@ -152,24 +154,34 @@ cp target/release/brightness.dll .
 
 ## 🧪 Tests
 
-Both suites are pure Dart — no Flutter SDK needed.
+Three pure-Dart suites, no Flutter SDK needed. `mock_all.dart` runs both and
+prints a single total — **465 checks**.
 
 ```bash
 cd ExDesktop
-dart run test/liquid_glass_mock_check.dart   # physics
-dart run test/system_mock_check.dart         # system layer + assistant
+dart run test/mock_all.dart                  # everything, 465 checks
+dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
+dart run test/system_mock_check.dart         # system + assistant, 412 checks
 ```
 
 ```
-[liquid glass]  ✓ springs, morphs, reversal, 200 fuzz runs
-passed: 53   failed: 0 — ALL GREEN
-
-[hidden process]  ✓ silent console runner: stdout, stderr, exit codes
-[radio parsing]   ✓ On/Off/blocked/unavailable, adapter state
-[command parser]  ✓ 40+ Russian phrasings, incl. the "выключи звук" trap
-[router]          ✓ the sink receives exactly the parsed action
-[prompt]          ✓ every catalog intent is named in the prompt
-passed: 138  failed: 0 — ALL GREEN
+[liquid glass]    ✓ springs, morphs, reversal, 200 fuzz runs, COM volume probe
+[hidden process]  ✓ stdout/stderr/exit codes, 20k-line output, timeout kill,
+                    UTF-16LE -EncodedCommand, Cyrillic round-trip
+[native heap]     ✓ write/read, 2000 alloc/free cycles, free(nullptr)
+[radio script]    ✓ no leftover placeholders, UTF-8 output, SetStateAsync
+[radio parsing]   ✓ every state, disabled adapter, adapter-only, CRLF,
+                    malformed lines, unknown radio kinds
+[radio labels]    ✓ Russian state strings for both radios
+[command parser]  ✓ 100+ phrasings: radios, volume (digits, %, Russian
+                    numerals), mute, settings sections, media, brightness,
+                    power — plus the traps that used to misfire
+[router]          ✓ every intent reaches the sink and answers in one line
+[prompt]          ✓ every catalog intent is in the prompt, every catalog
+                    example parses to its own intent
+[sound]           ✓ read-only endpoint checks, listeners fire and detach
+[window guards]   ✓ the sound path contains no window-visibility calls
+passed: 465   failed: 0 — ALL GREEN
 ```
 
 ## 📄 License
