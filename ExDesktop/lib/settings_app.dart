@@ -1,9 +1,12 @@
 // settings_app.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'dart:ui';
 
 import 'liquid_glass/menu_spring.dart';
+import 'system_actions.dart';
 
 class SettingsApp extends StatefulWidget {
   final VoidCallback onClose;
@@ -40,56 +43,84 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
     {
       'title': 'Input & output',
       'items': [
-        {'icon': Icons.mouse, 'label': 'Mouse & touchpad'},
-        {'icon': Icons.keyboard, 'label': 'Keyboard'},
-        {'icon': Icons.speaker, 'label': 'Sound settings'},
-        {'icon': Icons.monitor, 'label': 'Display & monitor'},
-        {'icon': Icons.accessibility, 'label': 'Accessibility'},
+        {
+          'icon': Icons.mouse,
+          'label': 'Mouse & touchpad',
+          'uri': 'ms-settings:mousetouchpad',
+        },
+        {'icon': Icons.keyboard, 'label': 'Keyboard', 'uri': 'ms-settings:typing'},
+        {'icon': Icons.speaker, 'label': 'Sound settings', 'uri': 'ms-settings:sound'},
+        {'icon': Icons.monitor, 'label': 'Display & monitor', 'uri': 'ms-settings:display'},
+        {
+          'icon': Icons.accessibility,
+          'label': 'Accessibility',
+          'uri': 'ms-settings:easeofaccess',
+        },
       ],
     },
     {
       'title': 'Connected devices',
       'items': [
-        {'icon': Icons.bluetooth, 'label': 'Bluetooth'},
-        {'icon': Icons.camera, 'label': 'Drives & cameras'},
+        {'icon': Icons.bluetooth, 'label': 'Bluetooth', 'uri': 'ms-settings:bluetooth'},
+        {
+          'icon': Icons.camera,
+          'label': 'Drives & cameras',
+          'uri': 'ms-settings:connecteddevices',
+        },
       ],
     },
     {
       'title': 'Network & connectivity',
       'items': [
-        {'icon': Icons.wifi, 'label': 'Wi-Fi & internet'},
+        {'icon': Icons.wifi, 'label': 'Wi-Fi & internet', 'uri': 'ms-settings:network-wifi'},
       ],
     },
     {
       'title': 'Appearance',
       'items': [
-        {'icon': Icons.wallpaper, 'label': 'Wallpaper'},
-        {'icon': Icons.palette, 'label': 'Colors & themes'},
-        {'icon': Icons.text_fields, 'label': 'Text & fonts'},
-        {'icon': Icons.animation, 'label': 'Animations'},
+        {
+          'icon': Icons.wallpaper,
+          'label': 'Wallpaper',
+          'uri': 'ms-settings:personalization-background',
+        },
+        {'icon': Icons.palette, 'label': 'Colors & themes', 'uri': 'ms-settings:colors'},
+        {'icon': Icons.text_fields, 'label': 'Text & fonts', 'uri': 'ms-settings:fonts'},
+        {
+          'icon': Icons.animation,
+          'label': 'Visual effects & animations',
+          'uri': 'ms-settings:easeofaccess-display',
+        },
       ],
     },
     {
       'title': 'Apps & windows',
       'items': [
-        {'icon': Icons.apps, 'label': 'Default apps'},
-        {'icon': Icons.notifications, 'label': 'Notifications'},
-        {'icon': Icons.window, 'label': 'Window manager'},
+        {'icon': Icons.apps, 'label': 'Default apps', 'uri': 'ms-settings:defaultapps'},
+        {
+          'icon': Icons.notifications,
+          'label': 'Notifications',
+          'uri': 'ms-settings:notifications',
+        },
+        {'icon': Icons.window, 'label': 'Multitasking & windows', 'uri': 'ms-settings:multitasking'},
       ],
     },
     {
       'title': 'Security & privacy',
       'items': [
-        {'icon': Icons.login, 'label': 'Login screen'},
-        {'icon': Icons.lock, 'label': 'Lock screen'},
-        {'icon': Icons.feedback, 'label': 'Feedback'},
+        {'icon': Icons.login, 'label': 'Login screen', 'uri': 'ms-settings:signinoptions'},
+        {'icon': Icons.lock, 'label': 'Lock screen', 'uri': 'ms-settings:lockscreen'},
+        {
+          'icon': Icons.system_update,
+          'label': 'Windows Update',
+          'uri': 'ms-settings:windowsupdate',
+        },
       ],
     },
     {
       'title': 'Language & time',
       'items': [
-        {'icon': Icons.calendar_today, 'label': 'Date & time'},
-        {'icon': Icons.language, 'label': 'Language & region'},
+        {'icon': Icons.calendar_today, 'label': 'Date & time', 'uri': 'ms-settings:dateandtime'},
+        {'icon': Icons.language, 'label': 'Language & region', 'uri': 'ms-settings:regionlanguage'},
       ],
     },
   ];
@@ -303,6 +334,11 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
               setState(() {
                 _selectedIndex = currentIndex;
               });
+              // Every row now opens the matching Windows Settings page.
+              final uri = item['uri'] as String?;
+              if (uri != null && uri.isNotEmpty) {
+                unawaited(openSettingsPage(uri));
+              }
             },
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),

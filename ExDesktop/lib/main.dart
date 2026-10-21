@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert' show jsonDecode;
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'player.dart';
 import 'settings_app.dart';
+import 'system_actions.dart';
+import 'volume_control.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'liquid_glass/morph_controller.dart';
 import 'liquid_glass/morph_glass.dart';
@@ -96,10 +99,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   MorphPanelController? _menuMorph;
   MorphPanelController? _brightnessMorph;
   MorphPanelController? _playerMorph;
+  MorphPanelController? _volumeMorph;
+  MorphPanelController? _launcherMorph;
 
   bool get _isMenuOpen => _menuMorph?.active ?? false;
   bool get _isBrightnessOpen => _brightnessMorph?.active ?? false;
   bool get _isPlayerOpen => _playerMorph?.active ?? false;
+  bool get _isVolumeOpen => _volumeMorph?.active ?? false;
+  bool get _isLauncherOpen => _launcherMorph?.active ?? false;
+
+  // System volume mirrored from the audio endpoint; the mini panel reads it
+  // on open and writes it on drag.
+  double _volume = 0.7;
+  bool _muted = false;
 
   // Hand-written metadata for files we know; every other .mp3 found in
   // assets/music is named from its filename automatically, so a new song
@@ -292,6 +304,14 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     final playerButton = [w / 2 - 95.0, 5.0, 190.0, 50.0];
     final playerRect = [w / 2 - 300.0, 70.0, 600.0, 400.0];
 
+    // The volume icon sits in the middle of the top-right icon row, its
+    // panel drops from right below it; the launcher menu is born from the
+    // nine-dots pill in the right dock and lands centered on screen.
+    final volumeButton = [w - 89.0, 10.0, 40.0, 40.0];
+    final volumeRect = [w - 355.0, 68.0, 320.0, 100.0];
+    final launcherButton = [w - 67.0, h / 2 - 50.0, 52.0, 100.0];
+    final launcherRect = [w / 2 - 160.0, h / 2 - 200.0, 320.0, 400.0];
+
     if (_menuMorph == null) {
       _menuMorph = MorphPanelController(
         buttonRect: menuButton,
@@ -308,10 +328,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         menuRect: playerRect,
         menuRadius: 25.0,
       )..attach(this);
+      _volumeMorph = MorphPanelController(
+        buttonRect: volumeButton,
+        menuRect: volumeRect,
+        menuRadius: 20.0,
+      )..attach(this);
+      _launcherMorph = MorphPanelController(
+        buttonRect: launcherButton,
+        menuRect: launcherRect,
+        menuRadius: 20.0,
+      )..attach(this);
     } else {
       _menuMorph!.retarget(menuButton, menuRect, 15.0);
       _brightnessMorph!.retarget(brightButton, brightRect, 25.0);
       _playerMorph!.retarget(playerButton, playerRect, 25.0);
+      _volumeMorph!.retarget(volumeButton, volumeRect, 20.0);
+      _launcherMorph!.retarget(launcherButton, launcherRect, 20.0);
     }
   }
 
@@ -544,6 +576,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     _menuMorph?.dispose();
     _brightnessMorph?.dispose();
     _playerMorph?.dispose();
+    _volumeMorph?.dispose();
+    _launcherMorph?.dispose();
     _brightnessLib = null;
     super.dispose();
   }
@@ -585,6 +619,138 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     if (_isMenuOpen) _menuMorph?.close();
     m.toggle();
     setState(() {});
+  }
+
+  void _toggleVolume() {
+    final m = _volumeMorph;
+    if (m == null) return;
+    if (_isBrightnessOpen) _brightnessMorph?.close();
+    if (_isMenuOpen) _menuMorph?.close();
+    if (_isPlayerOpen) _playerMorph?.close();
+    if (!m.active) {
+      // Read the real device state so the panel opens honest.
+      _volume = VolumeControl.instance.volume;
+      _muted = VolumeControl.instance.muted;
+    }
+    m.toggle();
+    setState(() {});
+  }
+
+  void _toggleLauncher() {
+    final m = _launcherMorph;
+    if (m == null) return;
+    if (_isBrightnessOpen) _brightnessMorph?.close();
+    if (_isMenuOpen) _menuMorph?.close();
+    if (_isPlayerOpen) _playerMorph?.close();
+    if (_isVolumeOpen) _volumeMorph?.close();
+    m.toggle();
+    setState(() {});
+  }
+
+  Future<void> _launchTerminal() async {
+    try {
+      await Process.start('wt.exe', [], mode: ProcessStartMode.detached);
+    } catch (_) {
+      await launchExe('cmd.exe');
+    }
+  }
+
+  // The 3x3 app grid of the launcher. Built fresh on each build so the
+  // tiles feel the theme (and survive hot reload) the same as everything
+  // else on the desktop.
+  List<List<Widget>> get _launcherRows => [
+        [
+          _LauncherTile(
+            icon: Icons.calculate_outlined,
+            label: 'Калькулятор',
+            onTap: () => unawaited(
+              launchAppFolder('Microsoft.WindowsCalculator_8wekyb3d8bbwe!App'),
+            ),
+          ),
+          _LauncherTile(
+            icon: Icons.notes_outlined,
+            label: 'Блокнот',
+            onTap: () => unawaited(launchExe('notepad.exe')),
+          ),
+          _LauncherTile(
+            icon: Icons.folder_outlined,
+            label: 'Файлы',
+            onTap: () => unawaited(launchExe('explorer.exe')),
+          ),
+        ],
+        [
+          _LauncherTile(
+            icon: Icons.brush_outlined,
+            label: 'Paint',
+            onTap: () => unawaited(launchExe('mspaint.exe')),
+          ),
+          _LauncherTile(
+            icon: Icons.photo_camera_outlined,
+            label: 'Снимок',
+            onTap: () => unawaited(openShellLocation('ms-screenclip:')),
+          ),
+          _LauncherTile(
+            icon: Icons.donut_large_outlined,
+            label: 'Задачи',
+            onTap: () => unawaited(launchExe('taskmgr.exe')),
+          ),
+        ],
+        [
+          _LauncherTile(
+            icon: Icons.terminal_outlined,
+            label: 'Терминал',
+            onTap: () => unawaited(_launchTerminal()),
+          ),
+          _LauncherTile(
+            icon: Icons.public_outlined,
+            label: 'Браузер',
+            onTap: () => unawaited(launchExe('msedge.exe')),
+          ),
+          _LauncherTile(
+            icon: Icons.settings_outlined,
+            label: 'Настройки',
+            onTap: () => unawaited(openSettingsPage('ms-settings:')),
+          ),
+        ],
+      ];
+
+  /// Asks once, then applies: restart, shutdown, sleep and sign-out go
+  /// through this so one accidental press cannot turn the PC off.
+  void _confirmThen(Future<void> action, String question) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xF01A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(
+          question,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Отмена',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              unawaited(action);
+            },
+            child: const Text(
+              'Да',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _toggleSettings() {
@@ -667,13 +833,19 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          if (_isMenuOpen || _isBrightnessOpen || _isPlayerOpen)
+          if (_isMenuOpen ||
+              _isBrightnessOpen ||
+              _isPlayerOpen ||
+              _isVolumeOpen ||
+              _isLauncherOpen)
             Positioned.fill(
               child: GestureDetector(
                 onTap: () {
                   if (_isMenuOpen) _closeMenu();
                   if (_isBrightnessOpen) _toggleBrightness();
                   if (_isPlayerOpen) _togglePlayer();
+                  if (_isVolumeOpen) _toggleVolume();
+                  if (_isLauncherOpen) _toggleLauncher();
                 },
                 behavior: HitTestBehavior.opaque,
                 child: const SizedBox.shrink(),
@@ -841,45 +1013,58 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                             MouseRegion(
                               onEnter: (event) => setState(() => _isBluetoothHovered = true),
                               onExit: (event) => setState(() => _isBluetoothHovered = false),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _isBluetoothHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(10.0),
+                              child: GestureDetector(
+                                onTap: () => openSettingsPage('ms-settings:bluetooth'),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: _isBluetoothHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(10.0),
+                                  ),
+                                  child: const Icon(Icons.bluetooth, color: Colors.white, size: 20),
                                 ),
-                                child: const Icon(Icons.bluetooth, color: Colors.white, size: 20),
                               ),
                             ),
                             const SizedBox(width: 4),
                             MouseRegion(
                               onEnter: (event) => setState(() => _isVolumeHovered = true),
                               onExit: (event) => setState(() => _isVolumeHovered = false),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _isVolumeHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(10.0),
+                              child: GestureDetector(
+                                onTap: _toggleVolume,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: _isVolumeHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(10.0),
+                                  ),
+                                  child: Icon(
+                                    _muted ? Icons.volume_off : Icons.volume_up,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                 ),
-                                child: const Icon(Icons.volume_up, color: Colors.white, size: 20),
                               ),
                             ),
                             const SizedBox(width: 4),
                             MouseRegion(
                               onEnter: (event) => setState(() => _isWifiHovered = true),
                               onExit: (event) => setState(() => _isWifiHovered = false),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: _isWifiHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(10.0),
+                              child: GestureDetector(
+                                onTap: () => openSettingsPage('ms-settings:network-wifi'),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: _isWifiHovered ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(10.0),
+                                  ),
+                                  child: const Icon(Icons.wifi, color: Colors.white, size: 20),
                                 ),
-                                child: const Icon(Icons.wifi, color: Colors.white, size: 20),
                               ),
                             ),
                           ],
@@ -1040,6 +1225,92 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             },
           ),
           ListenableBuilder(
+            listenable: _volumeMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _volumeMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 320,
+                restHeight: 100,
+                interactive: !morph.animating,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 15),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _muted = !_muted;
+                            VolumeControl.instance.muted = _muted;
+                          });
+                        },
+                        icon: Icon(
+                          _muted ? Icons.volume_off : Icons.volume_up,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: WaveSlider(
+                          value: _muted ? 0.0 : _volume,
+                          onChanged: (value) {
+                            setState(() {
+                              _volume = value;
+                              if (value > 0 && _muted) _muted = false;
+                              VolumeControl.instance.muted = _muted;
+                              VolumeControl.instance.volume = value;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _muted ? 'Mute' : '${(_volume * 100).round()}%',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+          ListenableBuilder(
+            listenable: _launcherMorph ?? const AlwaysStoppedAnimation<int>(0),
+            builder: (context, _) {
+              final morph = _launcherMorph;
+              final f = morph?.frame;
+              if (morph == null || f == null) return const SizedBox.shrink();
+              return MorphGlass(
+                frame: f,
+                restWidth: 320,
+                restHeight: 400,
+                interactive: !morph.animating,
+                child: SizedBox(
+                  width: 320,
+                  height: 400,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        for (final row in _launcherRows)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: row,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          ListenableBuilder(
             listenable: _menuMorph ?? const AlwaysStoppedAnimation<int>(0),
             builder: (context, _) {
               final morph = _menuMorph;
@@ -1063,23 +1334,40 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _PowerButton(
-                              icon: Icons.description,
-                              onTap: () {},
+                              icon: Icons.lock_outline,
+                              onTap: lockWorkstation,
+                            ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.logout,
+                              onTap: () => _confirmThen(
+                                signOut,
+                                'Выйти из системы?',
+                              ),
                             ),
                             const SizedBox(width: 1),
                             _PowerButton(
                               icon: Icons.restart_alt,
-                              onTap: () {},
-                            ),
-                            const SizedBox(width: 1),
-                            _PowerButton(
-                              icon: Icons.power_settings_new,
-                              onTap: () {},
+                              onTap: () => _confirmThen(
+                                restartMachine,
+                                'Перезагрузить компьютер?',
+                              ),
                             ),
                             const SizedBox(width: 1),
                             _PowerButton(
                               icon: Icons.bedtime,
-                              onTap: () {},
+                              onTap: () => _confirmThen(
+                                sleepMachine,
+                                'Усыпить компьютер?',
+                              ),
+                            ),
+                            const SizedBox(width: 1),
+                            _PowerButton(
+                              icon: Icons.power_settings_new,
+                              onTap: () => _confirmThen(
+                                shutdownMachine,
+                                'Выключить компьютер?',
+                              ),
                             ),
                             const SizedBox(width: 1),
                             _PowerButton(
@@ -1216,54 +1504,57 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                           child: MouseRegion(
                             onEnter: (event) => setState(() => _isDotsHovered = true),
                             onExit: (event) => setState(() => _isDotsHovered = false),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              curve: Curves.easeInOut,
-                              width: 52,
-                              height: 100,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(_isDotsHovered ? 15.0 : 25.0),
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 14,
-                                    height: 14,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white.withValues(alpha: 0.9),
+                            child: GestureDetector(
+                              onTap: _toggleLauncher,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeInOut,
+                                width: 52,
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(_isDotsHovered ? 15.0 : 25.0),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 14,
+                                      height: 14,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.white.withValues(alpha: 0.9),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Container(
-                                    width: 11,
-                                    height: 11,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white.withValues(alpha: 0.3),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      width: 11,
+                                      height: 11,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.white.withValues(alpha: 0.3),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Container(
-                                    width: 11,
-                                    height: 11,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white.withValues(alpha: 0.3),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      width: 11,
+                                      height: 11,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.white.withValues(alpha: 0.3),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Container(
-                                    width: 11,
-                                    height: 11,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.white.withValues(alpha: 0.3),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      width: 11,
+                                      height: 11,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.white.withValues(alpha: 0.3),
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -1395,6 +1686,64 @@ class _PowerButtonState extends State<_PowerButton> {
               color: Colors.white,
               size: 21,
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One launcher tile: icon over a short label, the classic light-canvas
+/// hover lift of the rest of the shell.
+class _LauncherTile extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _LauncherTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_LauncherTile> createState() => _LauncherTileState();
+}
+
+class _LauncherTileState extends State<_LauncherTile> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (event) => setState(() => _isHovered = true),
+      onExit: (event) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 84,
+          height: 84,
+          decoration: BoxDecoration(
+            color: _isHovered
+                ? Colors.white.withValues(alpha: 0.16)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14.0),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, color: Colors.white, size: 26),
+              const SizedBox(height: 7),
+              Text(
+                widget.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            ],
           ),
         ),
       ),
