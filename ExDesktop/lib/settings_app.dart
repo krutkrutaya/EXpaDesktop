@@ -63,6 +63,11 @@ class SettingsApp extends StatefulWidget {
   /// sends the user here.
   final String? initialSection;
 
+  /// Backends for the live panes. The defaults are the real system ones;
+  /// the widget tests pass recorders instead.
+  final RadioSource? radio;
+  final SoundSource? sound;
+
   const SettingsApp({
     super.key,
     required this.onClose,
@@ -70,6 +75,8 @@ class SettingsApp extends StatefulWidget {
     required this.initialPosition,
     required this.onPositionChanged,
     this.initialSection,
+    this.radio,
+    this.sound,
   });
 
   @override
@@ -337,9 +344,9 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
     if (_radioBusy) return;
     _radioBusy = true;
     try {
-      final wifi = await RadioControl.instance.status(RadioKind.wifi);
-      final bluetooth =
-          await RadioControl.instance.status(RadioKind.bluetooth);
+      final source = _radioSource;
+      final wifi = await source.status(RadioKind.wifi);
+      final bluetooth = await source.status(RadioKind.bluetooth);
       if (!mounted) return;
       setState(() {
         _radio[RadioKind.wifi] = wifi;
@@ -355,7 +362,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
     setState(() {
       _radioBusy = true;
     });
-    final result = await RadioControl.instance.setPower(kind, on);
+    final result = await _radioSource.setPower(kind, on);
     if (!mounted) return;
     setState(() {
       _radioBusy = false;
@@ -397,6 +404,11 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
   SettingsItem? get _selectedItem => _itemById(_selectedId);
 
   String? get _selectedSection => _selectedItem?.section;
+
+  /// The real backends unless the tests injected recorders.
+  RadioSource get _radioSource => widget.radio ?? RadioControl.instance;
+
+  SoundSource get _soundSource => widget.sound ?? SoundControl.instance;
 
   @override
   Widget build(BuildContext context) {
@@ -634,14 +646,14 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
 
   /// The master volume: the shell's own sound control, in the shell.
   Widget _buildSoundPane(SettingsItem item) {
-    final sound = SoundControl.instance;
+    final sound = _soundSource;
     return _DetailScaffold(
       item: item,
       children: [
         _DetailRow(
           icon: sound.muted ? Icons.volume_off : Icons.volume_up,
           title: sound.muted ? 'Звук заглушён' : 'Громкость ${sound.percent}%',
-          trailing: _GlassToggle(
+          trailing: GlassToggle(
             value: !sound.muted,
             onChanged: (on) {
               setState(() {
@@ -703,7 +715,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
           icon: kind == RadioKind.wifi ? Icons.wifi : Icons.bluetooth,
           title: status.label,
           subtitle: status.deviceName,
-          trailing: _GlassToggle(
+          trailing: GlassToggle(
             value: status.isOn,
             onChanged: (on) {
               unawaited(_toggleRadio(kind, on));
@@ -843,11 +855,13 @@ class _DetailRow extends StatelessWidget {
 }
 
 /// A glass switch: a knob that slides inside a capsule.
-class _GlassToggle extends StatelessWidget {
+///
+/// Public so the widget tests can tap it by type.
+class GlassToggle extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
 
-  const _GlassToggle({required this.value, required this.onChanged});
+  const GlassToggle({super.key, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {

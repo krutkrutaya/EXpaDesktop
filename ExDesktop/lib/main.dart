@@ -111,9 +111,6 @@ class _MyHomePageState extends State<MyHomePage>
   Timer? _replyTimer;
   late final CommandRouter _router;
 
-  /// Spelled out instead of the `KeyEventHandler` typedef: that name is not
-  /// part of every Flutter the app is built against.
-  KeyEventResult Function(KeyEvent event)? _keyboardHandler;
   double _brightness = 0.7;
   double _contrast = 0.7;
   double _warmth = 0.5;
@@ -214,7 +211,6 @@ class _MyHomePageState extends State<MyHomePage>
     _loadBrightnessLib();
     _initAudioPlayer();
     _router = CommandRouter(sink: this);
-    _installHotkeys();
     unawaited(_refreshRadios());
     _radioTimer = Timer.periodic(const Duration(seconds: 45), (timer) {
       unawaited(_refreshRadios());
@@ -612,10 +608,6 @@ class _MyHomePageState extends State<MyHomePage>
     _replyTimer?.cancel();
     _commandController.dispose();
     _commandFocus.dispose();
-    if (_keyboardHandler != null) {
-      HardwareKeyboard.instance.removeHandler(_keyboardHandler!);
-      _keyboardHandler = null;
-    }
     _audioPlayer.dispose();
     _rotationController.dispose();
     _menuMorph?.dispose();
@@ -841,25 +833,19 @@ class _MyHomePageState extends State<MyHomePage>
 
   // ---- the command line ------------------------------------------------------
 
-  /// Ctrl+Alt+Space opens the command line. The handler sits on the keyboard
-  /// itself, so it works no matter which widget has the focus.
-  void _installHotkeys() {
-    _keyboardHandler = (KeyEvent event) {
-      if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      final keyboard = HardwareKeyboard.instance;
-      if (event.logicalKey == LogicalKeyboardKey.escape && _commandBarOpen) {
-        _toggleCommandBar();
-        return KeyEventResult.handled;
-      }
-      final isTrigger = event.logicalKey == LogicalKeyboardKey.space &&
-          keyboard.isControlPressed &&
-          keyboard.isAltPressed;
-      if (!isTrigger) return KeyEventResult.ignored;
-      _toggleCommandBar();
-      return KeyEventResult.handled;
-    };
-    HardwareKeyboard.instance.addHandler(_keyboardHandler!);
-  }
+  /// Ctrl+Alt+Space opens the command line, Escape closes it. The bindings
+  /// go through the focus system ([CallbackShortcuts]), not through
+  /// [HardwareKeyboard.addHandler]: its callback type changed shape between
+  /// Flutter versions, and the focus path is the documented one.
+  Map<ShortcutActivator, VoidCallback> get _shortcutBindings => {
+        const SingleActivator(
+          LogicalKeyboardKey.space,
+          control: true,
+          alt: true,
+        ): _toggleCommandBar,
+        if (_commandBarOpen)
+          const SingleActivator(LogicalKeyboardKey.escape): _toggleCommandBar,
+      };
 
   void _toggleCommandBar() {
     setState(() {
@@ -933,7 +919,7 @@ class _MyHomePageState extends State<MyHomePage>
                 IconButton(
                   onPressed: _toggleCommandBar,
                   icon: const Icon(Icons.close, color: Colors.white54, size: 16),
-                  padding: const EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
                   constraints:
                       const BoxConstraints(minWidth: 24, minHeight: 24),
                 ),
@@ -1073,7 +1059,11 @@ class _MyHomePageState extends State<MyHomePage>
     const double panelWidth = 72.0;
     const double panelMargin = 5.0;
 
-    return Scaffold(
+    // The shell owns its shortcuts through the focus system, not through
+    // HardwareKeyboard.addHandler: the callback type there changed shape
+    // between Flutter versions, and this way the key event is consumed
+    // instead of leaking into whatever has the focus.
+    final shell = Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
@@ -1905,6 +1895,13 @@ class _MyHomePageState extends State<MyHomePage>
           ),
         ],
       ),
+    );
+
+    return CallbackShortcuts(
+      bindings: _shortcutBindings,
+      // The inner Focus makes the shell the primary focus from the first
+      // frame, so Ctrl+Alt+Space works before anything else is clicked.
+      child: Focus(autofocus: true, child: shell),
     );
   }
 }

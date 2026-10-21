@@ -131,19 +131,28 @@ ExDesktop/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    └── system_mock_check.dart        # 🧪 412 system + assistant mock tests
+    ├── system_mock_check.dart        # 🧪 412 system + assistant mock tests
+    └── widget/
+        └── settings_app_test.dart    # 🧪 10 widget tests
 ```
+
+`windows/` holds the generated runner (CMake + C++ window host).
 
 ## 🚀 Building
 
+Requirements: **Flutter 3.x**, **Visual Studio 2022/2026 with the "Desktop
+development with C++" workload** (MSVC + CMake + Windows 10/11 SDK), and
+**Developer Mode** turned on (Flutter symlinks plugins on Windows).
+
 ```bash
-# 1. Flutter (https://docs.flutter.dev/get-started/install/windows)
 cd ExDesktop
 flutter pub get
-flutter run -d windows
+flutter run -d windows          # or: flutter build windows --release
 ```
 
-The Rust DLL is already built and lives at `lib/rust/brightness.dll`.
+The Windows runner lives in `ExDesktop/windows/` (generated with
+`flutter create --platforms=windows .` and committed, so a fresh clone
+builds). The Rust DLL is already built and lives at `lib/rust/brightness.dll`.
 To rebuild it yourself:
 
 ```bash
@@ -154,12 +163,15 @@ cp target/release/brightness.dll .
 
 ## 🧪 Tests
 
-Three pure-Dart suites, no Flutter SDK needed. `mock_all.dart` runs both and
-prints a single total — **465 checks**.
+Widget tests run under `flutter test`; the system/physics suites are plain
+Dart scripts (no Flutter needed). `mock_all.dart` runs both mock suites and
+prints a single total — **465 checks**, plus **10 widget tests**.
 
 ```bash
 cd ExDesktop
-dart run test/mock_all.dart                  # everything, 465 checks
+flutter test                                 # 10 widget tests
+flutter analyze                              # No issues found
+dart run test/mock_all.dart                  # 465 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
 dart run test/system_mock_check.dart         # system + assistant, 412 checks
 ```

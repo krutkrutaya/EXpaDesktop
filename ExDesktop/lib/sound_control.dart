@@ -7,7 +7,21 @@
 
 import 'volume_control.dart';
 
-class SoundControl {
+/// What the settings window needs from a sound backend.
+///
+/// [SoundControl] is the real one; the widget tests use a recorder, so a
+/// test can drag the volume without muting the machine that runs it.
+abstract class SoundSource {
+  double get volume;
+  set volume(double value);
+  bool get muted;
+  set muted(bool value);
+  int get percent;
+  void stepVolume(double direction);
+  void refresh();
+}
+
+class SoundControl implements SoundSource {
   static final SoundControl instance = SoundControl._();
 
   SoundControl._();
@@ -19,11 +33,13 @@ class SoundControl {
   bool _loaded = false;
 
   /// Master volume in [0..1].
+  @override
   double get volume {
     _load();
     return _volume;
   }
 
+  @override
   set volume(double value) {
     final v = value.clamp(0.0, 1.0);
     _volume = v;
@@ -38,11 +54,13 @@ class SoundControl {
   }
 
   /// Whether the default playback device is muted.
+  @override
   bool get muted {
     _load();
     return _muted;
   }
 
+  @override
   set muted(bool value) {
     _muted = value;
     _loaded = true;
@@ -51,9 +69,11 @@ class SoundControl {
   }
 
   /// Volume in percent, as shown next to the slider.
+  @override
   int get percent => (volume * 100).round();
 
   /// Moves the volume by one step in [direction] (-1 quieter, +1 louder).
+  @override
   void stepVolume(double direction) {
     _load();
     final next = (_volume + 0.02 * direction).clamp(0.0, 1.0);
@@ -72,6 +92,7 @@ class SoundControl {
   }
 
   /// Re-reads the endpoint, e.g. after another program changed the volume.
+  @override
   void refresh() {
     _loaded = false;
     _load();

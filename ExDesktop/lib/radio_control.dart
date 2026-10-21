@@ -104,8 +104,17 @@ class RadioActionResult {
   });
 }
 
+/// What the settings window needs from a radio backend.
+///
+/// [RadioControl] is the real one; the widget tests use a recorder, so the
+/// UI can be driven without touching the machine's radios.
+abstract class RadioSource {
+  Future<RadioStatus> status(RadioKind kind, {bool force});
+  Future<RadioActionResult> setPower(RadioKind kind, bool on);
+}
+
 /// Reads and writes the machine's radios.
-class RadioControl {
+class RadioControl implements RadioSource {
   static final RadioControl instance = RadioControl._();
 
   RadioControl._();
@@ -119,6 +128,7 @@ class RadioControl {
   static const Duration cacheTtl = Duration(seconds: 2);
 
   /// The current state of [kind], from the cache when it is still fresh.
+  @override
   Future<RadioStatus> status(RadioKind kind, {bool force = false}) async {
     if (!force) {
       final at = _cacheTime[kind];
@@ -134,6 +144,7 @@ class RadioControl {
   }
 
   /// Switches [kind] on or off and reports what the system says afterwards.
+  @override
   Future<RadioActionResult> setPower(RadioKind kind, bool on) async {
     final before = await status(kind, force: true);
     if (before.state == RadioState.unavailable) {
