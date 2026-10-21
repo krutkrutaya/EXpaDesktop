@@ -108,6 +108,13 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 
 # The brightness controller (DDC/CI + gamma) is a native library that the
-# Dart side loads by name, so it has to sit next to the exe.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/brightness.dll"
-  DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+# Dart side loads by name, so it has to sit next to the exe. It is not in the
+# repo (build it with `cargo build --release` in lib/rust); when it is missing
+# the app still runs, brightness control just stays disabled.
+set(BRIGHTNESS_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/brightness.dll")
+if(EXISTS "${BRIGHTNESS_DLL}")
+  install(FILES "${BRIGHTNESS_DLL}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+else()
+  message(STATUS "brightness.dll not found - building without DDC/CI brightness")
+endif()

@@ -27,3 +27,7 @@ build/
 *.ilk
 *.exp
 *.lib
+
+# Prebuilt native library: build it with cargo, do not commit it
+ExDesktop/lib/rust/*.dll
+ExDesktop/lib/rust/target/

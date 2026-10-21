@@ -207,12 +207,22 @@ flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desk
 ```
 
 The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
-`audioplayers_windows_plugin.dll`, `brightness.dll` and `data\flutter_assets\`.
+`audioplayers_windows_plugin.dll` and `data\flutter_assets\`.
 The Windows runner lives in `ExDesktop/windows/` (generated with
 `flutter create --platforms=windows .` and committed, so a fresh clone builds).
 
-The Rust DLL is vendored prebuilt at `lib/rust/brightness.dll`; rebuild it with
-`cd lib/rust; cargo build --release; cp target/release/brightness.dll .`.
+**Nothing binary is committed.** The DDC/CI brightness controller is a Rust
+library you build once (needs a Rust toolchain):
+
+```bash
+cd ExDesktop/lib/rust
+cargo build --release
+cp target/release/brightness.dll .   # local only, gitignored
+```
+
+Without it the app still runs — the brightness sliders simply do nothing:
+`lib/main.dart` tries several paths and fails soft. `flutter build windows`
+copies the DLL next to the exe when it is there, and skips it otherwise.
 
 ## 🧪 Tests
 
