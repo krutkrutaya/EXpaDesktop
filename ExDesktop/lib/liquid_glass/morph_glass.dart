@@ -19,6 +19,10 @@ class MorphGlass extends StatelessWidget {
   /// halves themselves (the player) pass a transparent tint.
   final Color tint;
 
+  /// The glass rect's hairline. Panels that do not want an outline (the
+  /// player) pass a transparent color.
+  final Color borderColor;
+
   /// The panel content, laid out at rest size.
   final Widget child;
 
@@ -32,6 +36,7 @@ class MorphGlass extends StatelessWidget {
     required this.restHeight,
     required this.child,
     this.tint = const Color(0x99000000),
+    this.borderColor = const Color(0x26FFFFFF),
     this.interactive = true,
   });
 
@@ -63,7 +68,7 @@ class MorphGlass extends StatelessWidget {
                   color: tint,
                   borderRadius: BorderRadius.circular(radius),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: borderColor,
                     width: 1.0,
                   ),
                 ),

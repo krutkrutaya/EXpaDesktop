@@ -4,6 +4,11 @@
 // into a full wave that streams faster. The thumb grows on hover/press (one
 // size for both) and stretches like a droplet against the drag direction:
 // pull it left — its right side stretches, pull it right — its left.
+//
+// It moves smoothly, never in jumps: dragging anywhere shifts the value
+// relative to where the thumb was (no snap under the finger), and every
+// other change — a tap, an external set like a reset — glides there over a
+// few frames. All sliders share this exact behavior and droplet stretch.
 
 import 'dart:math' as math;
 
@@ -45,12 +50,18 @@ class _WaveSliderState extends State<WaveSlider>
   double _phase = 0;
   double _stretch = 0; // signed px, + = pulled right
   double _scale = 1;
+  // The value on screen and the value we report. The report is direct; the
+  // screen chases it, so nothing teleports.
   double _value = 0;
+  double _target = 0;
+  // Relative dragging: where the grab began, in px and in value.
+  double _dragStartX = 0;
+  double _dragStartValue = 0;
 
   @override
   void initState() {
     super.initState();
-    _value = widget.value.clamp(0.0, 1.0);
+    _value = _target = widget.value.clamp(0.0, 1.0);
     _ticker = createTicker(_tick);
     _ticker.start();
   }
@@ -58,7 +69,7 @@ class _WaveSliderState extends State<WaveSlider>
   @override
   void didUpdateWidget(covariant WaveSlider old) {
     super.didUpdateWidget(old);
-    if (!_drag) _value = widget.value.clamp(0.0, 1.0);
+    if (!_drag) _target = widget.value.clamp(0.0, 1.0);
   }
 
   @override
@@ -70,6 +81,9 @@ class _WaveSliderState extends State<WaveSlider>
   void _tick(Duration elapsed) {
     final t = math.min(elapsed.inMicroseconds / 1e6, 0.05);
     if (t <= 0) return;
+    // Chase the target (20/s: smooth but within arm's reach).
+    _value += (_target - _value) * (1 - math.exp(-t * 20));
+    if ((_target - _value).abs() < 0.0004) _value = _target;
     final target = _drag ? 1.0 : (_hover ? 0.45 : 0.16);
     _amp += (target - _amp) * (1 - math.exp(-t * 9));
     _phase += t * (_drag ? 9.0 : 0.7);
@@ -80,15 +94,18 @@ class _WaveSliderState extends State<WaveSlider>
     setState(() {});
   }
 
+  double _padFor(double radius) => radius * 1.35 + 2;
+
   double _posToValue(double dx, double width) {
-    final pad = widget.thumbRadius * 1.35 + 2;
+    final pad = _padFor(widget.thumbRadius);
     final usable = math.max(width - pad * 2, 1.0);
     return ((dx - pad) / usable).clamp(0.0, 1.0);
   }
 
   void _apply(double v) {
-    setState(() => _value = v);
-    widget.onChanged(v);
+    _target = v.clamp(0.0, 1.0);
+    setState(() => _value = _target);
+    widget.onChanged(_target);
   }
 
   @override
@@ -102,23 +119,23 @@ class _WaveSliderState extends State<WaveSlider>
           final width = constraints.maxWidth;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (d) {
-              // Jumping to a tap also bends the droplet toward the jump.
-              final v = _posToValue(d.localPosition.dx, width);
-              final span = math.max(width - (widget.thumbRadius * 1.35 + 2) * 2,
-                  1.0);
-              _stretch = ((v - _value) * span * 0.4)
-                  .clamp(-widget.thumbRadius * 2.6, widget.thumbRadius * 2.6);
-              _apply(v);
-            },
+            onTapDown: (d) => _apply(_posToValue(d.localPosition.dx, width)),
             onHorizontalDragStart: (d) {
+              // Relative from the very grab: the thumb stays where it is
+              // until the finger moves, no snap under it.
+              _dragStartX = d.localPosition.dx;
+              _dragStartValue = _value;
+              _target = _value;
               setState(() => _drag = true);
-              _apply(_posToValue(d.localPosition.dx, width));
             },
             onHorizontalDragUpdate: (d) {
+              final pad = _padFor(widget.thumbRadius);
+              final span = math.max(width - pad * 2, 1.0);
+              final from =
+                  _dragStartValue + (d.localPosition.dx - _dragStartX) / span;
               _stretch = (_stretch * 0.45 + d.delta.dx * 0.9)
-                  .clamp(-widget.thumbRadius * 2.6, widget.thumbRadius * 2.6);
-              _apply(_posToValue(d.localPosition.dx, width));
+                  .clamp(-widget.thumbRadius * 1.7, widget.thumbRadius * 1.7);
+              _apply(from);
             },
             onHorizontalDragEnd: (_) {
               setState(() => _drag = false);
@@ -223,11 +240,11 @@ class _WavePainter extends CustomPainter {
 
     // Thumb: a droplet that stretches against the drag direction.
     final r = thumbRadius * thumbScale;
-    final s = stretch.clamp(-r * 1.3, r * 1.3);
+    final s = stretch.clamp(-r * 1.15, r * 1.15);
     final sa = s.abs();
-    final rx = r + sa * 0.85;
-    final ry = r * (1 - 0.3 * (sa / (sa + r)));
-    final cx = thumbX - s * 0.45;
+    final rx = r + sa / 2;
+    final ry = r * (1 - 0.22 * (sa / (sa + r)));
+    final cx = thumbX - s / 2;
     canvas.drawOval(
       Rect.fromCenter(
         center: Offset(cx, cy),

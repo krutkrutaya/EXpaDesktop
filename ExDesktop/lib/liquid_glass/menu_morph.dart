@@ -3,9 +3,9 @@
 //
 // Opening: the button's capsule draws itself into a round drop, the drop is
 // thrown out to where the menu will be, swells to the menu's size and squares
-// off, with its own random push so no two openings are the same. Closing: the
-// menu shrinks back into a drop that rises into the button, stretches into
-// its capsule on the way, and fades there.
+// off, landing exactly on the menu's rect. Closing: the menu shrinks back
+// into a drop that rises into the button, stretches into its capsule on the
+// way, and fades there.
 
 import 'dart:math' as math;
 
@@ -84,11 +84,6 @@ const double _closeMoveStiffness = 130, _closeMoveDamping = 18;
 const double _contentFadeStiffness = 137, _contentFadeDamping = 20;
 // The drop is thrown out at this multiple of the distance, per second.
 const double _throw = 16;
-// The push each opening gets on top of the throw, px/s per px of the menu's
-// shorter side, at its strongest; its strength drawn from _pushMin to 1 of
-// that, its direction from anywhere in the lower half.
-const double _push = 3.65;
-const double _pushMin = 0.67;
 // The capsule draws into a drop this many times the button's height across.
 const double _dropSizeFactor = 1.15;
 const double _capsuleTimeS = 0.14;
@@ -99,9 +94,10 @@ const double _capsulePush = 2.2;
 const double _roundTimeS = 0.1;
 // Glass opacity and softening come back to open values over this long.
 const double _revealS = 0.12;
-// The springs swing the drop past the menu; all but this much of the swing is
-// taken out as it swells, so the grown glass does not shoot back over the menu.
-const double _settledSwing = 0.25;
+// The springs swing the drop past the menu; all of the swing is taken out as
+// it swells, so the grown glass sits exactly on the menu instead of drifting
+// in around it at the end.
+const double _settledSwing = 0;
 const double _openSizeS = 0.3;
 const double _closeSizeS = 0.25;
 const double _contentScaleS = 0.3;
@@ -224,11 +220,6 @@ class MenuMorphMotion {
     done: true,
   );
 
-  double _pushVx = 0;
-  double _pushVy = 0;
-
-  final double Function() _random;
-
   MenuMorphMotion(
     this.opening,
     this._buttonRect,
@@ -236,8 +227,7 @@ class MenuMorphMotion {
     this._menuRadius, {
     MorphFrame? from,
     List<double>? velocities,
-    double Function()? random,
-  })  : _random = random ?? math.Random().nextDouble {
+  }) {
     MorphFrame start = from ??
         (opening
             ? MorphFrame(
@@ -297,15 +287,12 @@ class MenuMorphMotion {
     if (!opening) _travelFade = _clamp01(start.glassOpacity);
     _aim();
     if (opening && velocities == null) {
+      // The drop is thrown out along the line to the menu; the reference's
+      // random lateral push stayed in liquid-dom — against these large
+      // panels it read as drift, then a snap into place at the end.
       final launch = _capsuleS > 0 ? _capsulePush : _throw * 0.5;
       _x.velocity = (_x.target - _x.value) * launch;
       _y.velocity = (_y.target - _y.value) * launch;
-      final angle = _random() * math.pi;
-      final push = _push *
-          math.min(_menu[2], _menu[3]) *
-          _lerp(_pushMin, 1, _random());
-      _pushVx = math.cos(angle) * push;
-      _pushVy = math.sin(angle) * push;
     }
   }
 
@@ -397,11 +384,6 @@ class MenuMorphMotion {
     }
     final t = _t - _capsuleS;
     _stepSprings(math.min(dt, t));
-    if (t > 0 && t < 0.2 && (_pushVx != 0 || _pushVy != 0)) {
-      final forceFactor = math.sin((t / 0.2) * math.pi) * (dt / 0.2);
-      _x.velocity += _pushVx * forceFactor;
-      _y.velocity += _pushVy * forceFactor;
-    }
     final g = t - _roundS;
     double w, h, radius;
     if (g < 0) {
@@ -418,13 +400,19 @@ class MenuMorphMotion {
       final k = _openSize(_clamp01(g / _openSizeS));
       w = _lerp(from[0], _menu[2], k);
       h = _lerp(from[1], _menu[3], k);
-      // The corners square off as the glass grows, and are the menu's once it has.
+      // The corners square off as the glass grows, on the clock rather than
+      // the slow-out size curve, and quickly: by mid-growth the rounding is
+      // near the menu's, so the flying glass reads like the panel it will
+      // land as instead of ballooning rounder and rounder for a second.
+      final rounding = _clamp01(g / _openSizeS);
       final menuRound =
           _menuRadius / math.max(math.min(_menu[2], _menu[3]) / 2, 1);
       final roundFrom = _roundS > 0 ? 1.0 : _radiusFrom;
       // Never a corner sharper than the menu's while the drop is smaller.
       radius = math.max(
-          _lerp(roundFrom, menuRound, k) * math.min(w, h) / 2,
+          _lerp(roundFrom, menuRound, math.sqrt(rounding)) *
+              math.min(w, h) /
+              2,
           math.min(_menuRadius, math.min(w / 2, h / 2)));
     }
     final k = _openSize(_clamp01(math.max(g, 0) / _openSizeS));

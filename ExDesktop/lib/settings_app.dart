@@ -239,10 +239,10 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                                     ),
                                   ),
                                 );
-                              }).toList(),
+                              }),
                             ],
                           );
-                        }).toList(),
+                        }),
                       ),
                     ),
                   ),

@@ -1130,8 +1130,10 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 restHeight: 400,
                 // The player styles its own halves: the left panel keeps a
                 // dark blurred backdrop, the right list has none — only the
-                // track cards carry a background there.
+                // track cards carry a background there, no overall tint and
+                // no white outline.
                 tint: Colors.transparent,
+                borderColor: Colors.transparent,
                 interactive: !morph.animating,
                 child: PlayerPanel(
                   isPlaying: _isPlaying,
