@@ -139,6 +139,33 @@ void main() {
     await _open(tester, section: 'sound', sound: _FakeSound(), size: const Size(1024, 700));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('the display pane shows the real values, not made-up defaults',
+      (tester) async {
+    final applied = <String, double>{};
+    final display = DisplaySettings(
+      brightness: 0.42,
+      contrast: 0.6,
+      warmth: 0.0,
+      onBrightness: (v) => applied['brightness'] = v,
+      onContrast: (v) => applied['contrast'] = v,
+      onWarmth: (v) => applied['warmth'] = v,
+    );
+
+    await _open(tester, section: 'display', display: display);
+
+    expect(find.text('Яркость'), findsOneWidget);
+    expect(find.text('Контраст'), findsOneWidget);
+    expect(find.text('Теплота'), findsOneWidget);
+
+    // The numbers have to be the live ones: warmth 0 is a neutral screen,
+    // and showing 50% there was the bug.
+    expect(find.text('42%'), findsOneWidget);
+    expect(find.text('60%'), findsOneWidget);
+    expect(find.text('0%'), findsOneWidget);
+    expect(applied, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 // ---- helpers -------------------------------------------------------------------
@@ -147,6 +174,7 @@ Widget _settings({
   String? section,
   RadioSource? radio,
   SoundSource? sound,
+  DisplaySettings? display,
 }) {
   return SettingsApp(
     initialPosition: Offset.zero,
@@ -156,6 +184,7 @@ Widget _settings({
     initialSection: section,
     radio: radio,
     sound: sound,
+    display: display,
   );
 }
 
@@ -168,6 +197,7 @@ Future<void> _open(
   String? section,
   RadioSource? radio,
   SoundSource? sound,
+  DisplaySettings? display,
   Size size = const Size(1280, 800),
 }) async {
   tester.view.physicalSize = size;
@@ -178,6 +208,7 @@ Future<void> _open(
     section: section,
     radio: radio,
     sound: sound,
+    display: display,
   )));
   await _settleWindow(tester);
 }

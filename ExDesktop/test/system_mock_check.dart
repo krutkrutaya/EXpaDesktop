@@ -626,6 +626,21 @@ void testSoundControl() {
   final volume = sound.volume;
   check('volume is in range', volume >= 0.0 && volume <= 1.0);
   checkEquals('percent matches the volume', sound.percent, (volume * 100).round());
+
+  // Round-trip through COM: the getter must return the level, not the
+  // HRESULT. It used to return 0, which made every panel open at 0%.
+  final before = VolumeControl.instance.volume;
+  try {
+    VolumeControl.instance.volume = 0.37;
+    checkClose('the volume getter returns the level, not the HRESULT',
+        VolumeControl.instance.volume, 0.37, 0.02);
+    VolumeControl.instance.volume = 0.61;
+    checkClose('the volume getter follows a second change',
+        VolumeControl.instance.volume, 0.61, 0.02);
+  } finally {
+    VolumeControl.instance.volume = before;
+  }
+  checkClose('the volume is put back', VolumeControl.instance.volume, before, 0.02);
   check('mute reads as a bool', sound.muted == true || sound.muted == false);
   checkClose(
     'the mirror matches the endpoint',

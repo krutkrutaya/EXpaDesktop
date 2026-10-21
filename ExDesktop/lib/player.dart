@@ -1,5 +1,6 @@
 // player.dart
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'liquid_glass/wave_slider.dart';
@@ -10,6 +11,9 @@ class PlayerPanel extends StatefulWidget {
   final int selectedTrack;
   final double progress;
   final List<Map<String, String>> tracks;
+
+  /// Cover art parsed out of the ID3 tags, keyed by file name.
+  final Map<String, Uint8List> covers;
   final String currentTime;
   final String totalDuration;
   final VoidCallback onTogglePlay;
@@ -33,6 +37,7 @@ class PlayerPanel extends StatefulWidget {
     required this.selectedTrack,
     required this.progress,
     required this.tracks,
+    this.covers = const {},
     required this.currentTime,
     required this.totalDuration,
     required this.onTogglePlay,
@@ -147,6 +152,44 @@ class _PlayerPanelState extends State<PlayerPanel> {
     return avatar;
   }
 
+  /// The cover for a track: the picture inside its ID3 tag first, then the
+  /// bundled image from the track table, then a placeholder.
+  Uint8List? _embeddedCover(int index) {
+    final file = widget.tracks[index]['file'] ?? '';
+    return widget.covers[file];
+  }
+
+  bool _hasArt(int index) =>
+      _embeddedCover(index) != null || _getAvatar(index).isNotEmpty;
+
+  Widget _coverImage(
+    int index, {
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.cover,
+  }) {
+    final bytes = _embeddedCover(index);
+    Widget fallback(BuildContext context, Object error, StackTrace? stack) =>
+        width == null ? _buildPlaceholder() : _buildSmallPlaceholder();
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        width: width,
+        height: height,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: fallback,
+      );
+    }
+    return Image.asset(
+      _getAvatar(index),
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: fallback,
+    );
+  }
+
   String _getTitle(int index) {
     return widget.tracks[index]['title'] ?? '';
   }
@@ -171,7 +214,7 @@ class _PlayerPanelState extends State<PlayerPanel> {
   }
 
   Widget _buildLeftPanel() {
-    final avatarPath = _getAvatar(widget.selectedTrack);
+    final hasArt = _hasArt(widget.selectedTrack);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(25),
@@ -205,13 +248,8 @@ class _PlayerPanelState extends State<PlayerPanel> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          if (avatarPath.isNotEmpty)
-                            Image.asset(
-                              avatarPath,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stack) =>
-                                  _buildPlaceholder(),
-                            )
+                          if (hasArt)
+                            _coverImage(widget.selectedTrack)
                           else
                             _buildPlaceholder(),
                           BackdropFilter(
@@ -220,7 +258,7 @@ class _PlayerPanelState extends State<PlayerPanel> {
                               color: Colors.black.withValues(alpha: 0.3),
                             ),
                           ),
-                          if (avatarPath.isNotEmpty)
+                          if (hasArt)
                             Center(
                               child: AnimatedScale(
                                 scale: _isBannerHovered ? 1.09 : 1.0,
@@ -228,13 +266,10 @@ class _PlayerPanelState extends State<PlayerPanel> {
                                 curve: Curves.easeOutBack,
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(12),
-                                  child: Image.asset(
-                                    avatarPath,
+                                  child: _coverImage(
+                                    widget.selectedTrack,
                                     width: 95,
                                     height: 95,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stack) =>
-                                        Container(),
                                   ),
                                 ),
                               ),
@@ -426,15 +461,8 @@ class _PlayerPanelState extends State<PlayerPanel> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: _getAvatar(index).isNotEmpty
-                            ? Image.asset(
-                                _getAvatar(index),
-                                width: 38,
-                                height: 38,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stack) =>
-                                    _buildSmallPlaceholder(),
-                              )
+                        child: _hasArt(index)
+                            ? _coverImage(index, width: 38, height: 38)
                             : _buildSmallPlaceholder(),
                       ),
                       const SizedBox(width: 10),

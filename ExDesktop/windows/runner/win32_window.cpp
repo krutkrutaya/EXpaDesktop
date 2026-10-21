@@ -150,7 +150,9 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // The shell is a desktop surface: it opens over the whole screen. The
+  // title bar stays, so there is always a way out.
+  return ShowWindow(window_handle_, SW_SHOWMAXIMIZED);
 }
 
 // static

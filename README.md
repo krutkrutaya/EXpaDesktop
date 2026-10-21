@@ -44,6 +44,8 @@ runs and 300 ms stress frames.
 
 ## 🎵 Music Player
 
+- A track fades in over ~250 ms instead of slamming the room at full level; **pause keeps the position**, play resumes exactly there
+- Covers come from the mp3 itself: the player reads the ID3v2 APIC frame, so a dropped file shows its own artwork with no config
 - **Wavy slider** in the Material Design style — the active track lives as a sine wave, surging while you drag
 - The thumb grows on hover and **stretches like a droplet** against the drag direction
 - 🟠 Loop the current track, repeat the playlist, shuffle order (the `•••` menu)
@@ -114,6 +116,9 @@ ExDesktop/
 │   ├── native_heap.dart         # malloc/free for the FFI modules
 │   ├── assistant_prompt.dart    # the assistant's system prompt + catalog
 │   ├── command_router.dart      # phrases → intents → machine actions
+│   ├── shell_layout.dart        # where every panel sits, as testable numbers
+│   ├── shell_panels.dart        # which surface may share the screen with which
+│   ├── id3_art.dart             # title / artist / cover from the mp3 tags
 │   ├── liquid_glass/            # 🔬 physics & widgets
 │   │   ├── menu_morph.dart      #   capsule→drop→panel morph
 │   │   ├── menu_spring.dart     #   bouncy scale (settings)
@@ -133,9 +138,11 @@ ExDesktop/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics mock tests
-    ├── system_mock_check.dart        # 🧪 412 system + assistant mock tests
+    ├── shell_check.dart              # 🧪 214 layout/policy/ID3 checks
+    ├── system_mock_check.dart        # 🧪 415 system + assistant mock tests
     └── widget/
-        └── settings_app_test.dart    # 🧪 10 widget tests
+        ├── settings_app_test.dart    # 🧪 11 widget tests: panes, switches
+        └── shell_test.dart           # 🧪 6 widget tests: surfaces, overflow
 ```
 
 `windows/` holds the generated runner (CMake + C++ window host).
@@ -165,17 +172,18 @@ cp target/release/brightness.dll .
 
 ## 🧪 Tests
 
-Widget tests run under `flutter test`; the system/physics suites are plain
-Dart scripts (no Flutter needed). `mock_all.dart` runs both mock suites and
-prints a single total — **465 checks**, plus **10 widget tests**.
+Widget tests run under `flutter test`; the system, shell and physics suites are
+plain Dart scripts (no Flutter needed). `mock_all.dart` runs all of them and
+prints a single total — **682 checks**, plus **17 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 10 widget tests
+flutter test                                 # 17 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 465 mock checks
+dart run test/mock_all.dart                  # 682 mock checks
 dart run test/liquid_glass_mock_check.dart   # physics only, 53 checks
-dart run test/system_mock_check.dart         # system + assistant, 412 checks
+dart run test/system_mock_check.dart         # system + assistant, 415 checks
+dart run test/shell_check.dart               # layout, panel policy, ID3: 214 checks
 ```
 
 ```
@@ -195,7 +203,7 @@ dart run test/system_mock_check.dart         # system + assistant, 412 checks
                     example parses to its own intent
 [sound]           ✓ read-only endpoint checks, listeners fire and detach
 [window guards]   ✓ the sound path contains no window-visibility calls
-passed: 465   failed: 0 — ALL GREEN
+passed: 682   failed: 0 — ALL GREEN
 ```
 
 ## 📄 License

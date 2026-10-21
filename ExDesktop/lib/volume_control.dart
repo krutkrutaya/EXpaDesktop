@@ -235,9 +235,13 @@ class VolumeControl {
     if (e == null) return _coarseVolume;
     final out = _alloc<Float>(4);
     try {
-      final v = _fnGetMaster(e)(e, out).toDouble();
+      // The call returns an HRESULT; the level is written into `out`. Reading
+      // the return value as the volume made every panel open at 0%.
+      final hr = _fnGetMaster(e)(e, out);
+      if (hr != 0) return _coarseVolume;
+      final v = out.value.toDouble();
       if (v >= 0.0 && v <= 1.0) _coarseVolume = v;
-      return v;
+      return _coarseVolume;
     } catch (_) {
       return _coarseVolume;
     } finally {
@@ -251,9 +255,10 @@ class VolumeControl {
     if (e == null) return _coarseMuted;
     final out = _alloc<Int32>(4);
     try {
-      final v = _fnGetMute(e)(e, out) != 0;
-      _coarseMuted = v;
-      return v;
+      final hr = _fnGetMute(e)(e, out);
+      if (hr != 0) return _coarseMuted;
+      _coarseMuted = out.value != 0;
+      return _coarseMuted;
     } catch (_) {
       return _coarseMuted;
     } finally {

@@ -11,7 +11,10 @@ import 'settings_app.dart';
 import 'system_actions.dart';
 import 'system_actions.dart' as sys;
 import 'command_router.dart';
+import 'id3_art.dart';
+import 'shell_layout.dart';
 import 'radio_control.dart';
+import 'shell_panels.dart';
 import 'sound_control.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'liquid_glass/morph_controller.dart';
@@ -48,7 +51,12 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
+  const MyHomePage({super.key, this.radio, this.sound});
+
+  /// Test seams: the widget tests pass recorders so no test spawns
+  /// PowerShell or moves the machine's volume.
+  final RadioSource? radio;
+  final SoundSource? sound;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -80,6 +88,10 @@ class _MyHomePageState extends State<MyHomePage>
   bool _isDotsHovered = false;
   bool _isTopPanelHovered = false;
   bool _isPlaying = false;
+
+  /// Whether a track is sitting in the player, paused or playing. Pause keeps
+  /// it true, so play resumes instead of restarting the track.
+  bool _trackLoaded = false;
   bool _isWifiHovered = false;
   bool _isBluetoothHovered = false;
   bool _isVolumeHovered = false;
@@ -91,6 +103,10 @@ class _MyHomePageState extends State<MyHomePage>
 
   // Which section the settings window shows: 'wifi', 'bluetooth', 'sound'.
   String? _settingsSection;
+
+  /// Drives the settings window's own springs: it shrinks into the dock
+  /// instead of vanishing when another surface takes the middle of the screen.
+  final SettingsAppController _settingsController = SettingsAppController();
 
   // The radios' real state, mirrored from the system for the top bar.
   RadioStatus _wifiStatus = const RadioStatus(
@@ -111,9 +127,16 @@ class _MyHomePageState extends State<MyHomePage>
   Timer? _replyTimer;
   late final CommandRouter _router;
 
+  RadioSource get _radioSource => widget.radio ?? RadioControl.instance;
+  SoundSource get _soundSource => widget.sound ?? SoundControl.instance;
+
   double _brightness = 0.7;
   double _contrast = 0.7;
-  double _warmth = 0.5;
+
+  /// 0 is neutral: [set_warmth] multiplies the red/blue channels down as the
+  /// value grows, so 0.5 was actually a strong warm cast and the panel lied
+  /// about the screen's real state.
+  double _warmth = 0.0;
   int _selectedTrack = 0;
   double _trackProgress = 0.0;
 
@@ -166,6 +189,9 @@ class _MyHomePageState extends State<MyHomePage>
   // first frame; the folder scan replaces this list as soon as it lands.
   // The maps stay mutable: playing a track writes the real duration into
   // its entry.
+  /// Cover art pulled out of the mp3 tags, keyed by file name.
+  Map<String, Uint8List> _covers = {};
+
   List<Map<String, String>> _tracks = [
     {
       'title': 'ICE',
@@ -248,8 +274,34 @@ class _MyHomePageState extends State<MyHomePage>
   Future<void> _scanMusicAssets() async {
     final files = await _musicAssetFiles();
     if (!mounted || files.isEmpty) return;
+
+    // Every file is asked for its own ID3 tags: a real title, a real artist
+    // and the cover art that is already inside the mp3. No hard-coded table.
+    final tracks = <Map<String, String>>[];
+    final covers = <String, Uint8List>{};
+    for (final file in files) {
+      final track = _trackFromFile(file);
+      try {
+        final data = await rootBundle.load('$_musicPrefix$file');
+        final tags = parseId3(data.buffer.asUint8List(
+          data.offsetInBytes,
+          data.lengthInBytes,
+        ));
+        if (tags != null) {
+          if (tags.title != null) track['title'] = tags.title!;
+          if (tags.artist != null) track['artist'] = tags.artist!;
+          if (tags.cover != null) covers[file] = tags.cover!;
+        }
+      } catch (_) {
+        // A broken file must not take the whole list down.
+      }
+      tracks.add(track);
+    }
+
+    if (!mounted) return;
     setState(() {
-      _tracks = [for (final file in files) _trackFromFile(file)];
+      _tracks = tracks;
+      _covers = covers;
       if (_selectedTrack >= _tracks.length) _selectedTrack = 0;
     });
   }
@@ -321,62 +373,44 @@ class _MyHomePageState extends State<MyHomePage>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final size = MediaQuery.of(context).size;
-    final w = size.width;
-    final h = size.height;
 
-    // Where each panel's glass is born from, and where it lands:
-    // the apps button in the right dock -> the power menu (700x550),
-    // the brightness button in the top panel -> the brightness panel,
-    // the mini-player capsule in the top panel -> the full player.
-    final menuButton = [w - 67.0, h - 72.0, 52.0, 52.0];
-    final menuRect = [w - 789.0, h - 570.0, 700.0, 550.0];
-
-    final brightButton = [w / 2 - 345.0, 10.0, 40.0, 40.0];
-    final brightRect = [w / 2 - 350.0, 60.0, 350.0, 180.0];
-
-    final playerButton = [w / 2 - 95.0, 5.0, 190.0, 50.0];
-    final playerRect = [w / 2 - 300.0, 70.0, 600.0, 400.0];
-
-    // The volume icon sits in the middle of the top-right icon row, its
-    // panel drops from right below it; the launcher menu is born from the
-    // nine-dots pill in the right dock and lands centered on screen.
-    final volumeButton = [w - 89.0, 10.0, 40.0, 40.0];
-    final volumeRect = [w - 355.0, 68.0, 320.0, 100.0];
-    final launcherButton = [w - 67.0, h / 2 - 50.0, 52.0, 100.0];
-    final launcherRect = [w / 2 - 160.0, h / 2 - 200.0, 320.0, 400.0];
+    // Where each panel's glass is born from, and where it lands. The numbers
+    // live in [ShellLayout] so the mock suite can check every one of them
+    // against the dock and the screen edges on any window size.
+    final l = ShellLayout(size.width, size.height);
 
     if (_menuMorph == null) {
       _menuMorph = MorphPanelController(
-        buttonRect: menuButton,
-        menuRect: menuRect,
+        buttonRect: l.menuButton,
+        menuRect: l.menuRect,
         menuRadius: 15.0,
       )..attach(this);
       _brightnessMorph = MorphPanelController(
-        buttonRect: brightButton,
-        menuRect: brightRect,
+        buttonRect: l.brightnessButton,
+        menuRect: l.brightnessRect,
         menuRadius: 25.0,
       )..attach(this);
       _playerMorph = MorphPanelController(
-        buttonRect: playerButton,
-        menuRect: playerRect,
+        buttonRect: l.playerButton,
+        menuRect: l.playerRect,
         menuRadius: 25.0,
       )..attach(this);
       _volumeMorph = MorphPanelController(
-        buttonRect: volumeButton,
-        menuRect: volumeRect,
+        buttonRect: l.volumeButton,
+        menuRect: l.volumeRect,
         menuRadius: 20.0,
       )..attach(this);
       _launcherMorph = MorphPanelController(
-        buttonRect: launcherButton,
-        menuRect: launcherRect,
+        buttonRect: l.launcherButton,
+        menuRect: l.launcherRect,
         menuRadius: 20.0,
       )..attach(this);
     } else {
-      _menuMorph!.retarget(menuButton, menuRect, 15.0);
-      _brightnessMorph!.retarget(brightButton, brightRect, 25.0);
-      _playerMorph!.retarget(playerButton, playerRect, 25.0);
-      _volumeMorph!.retarget(volumeButton, volumeRect, 20.0);
-      _launcherMorph!.retarget(launcherButton, launcherRect, 20.0);
+      _menuMorph!.retarget(l.menuButton, l.menuRect, 15.0);
+      _brightnessMorph!.retarget(l.brightnessButton, l.brightnessRect, 25.0);
+      _playerMorph!.retarget(l.playerButton, l.playerRect, 25.0);
+      _volumeMorph!.retarget(l.volumeButton, l.volumeRect, 20.0);
+      _launcherMorph!.retarget(l.launcherButton, l.launcherRect, 20.0);
     }
   }
 
@@ -523,30 +557,49 @@ class _MyHomePageState extends State<MyHomePage>
     }
   }
 
-  Future<void> _playWithDelay() async {
-    await Future.delayed(const Duration(milliseconds: 300));
-    await _audioPlayer.stop();
-    _currentTime = '0:00';
-    _audioDuration = null;
+  /// Loads the selected track into the player and fades it in.
+  ///
+  /// The fade is deliberate: starting a track at full level slams the room
+  /// with sound. Ten steps of ~24 ms is short enough to feel instant.
+  Future<void> _playCurrentTrack() async {
     final file = _tracks[_selectedTrack]['file'];
-    if (file != null && file.isNotEmpty) {
-      await _audioPlayer.play(AssetSource('music/$file'));
-    }
+    if (file == null || file.isEmpty) return;
+    await _audioPlayer.setVolume(0.0);
+    await _audioPlayer.play(AssetSource('music/$file'));
+    _trackLoaded = true;
+    unawaited(_fadeIn());
   }
 
-  void _toggleTrackPlay() async {
+  Future<void> _fadeIn() async {
+    for (var step = 1; step <= 10; step++) {
+      if (!mounted || !_isPlaying) return;
+      await _audioPlayer.setVolume(step / 10);
+      await Future<void>.delayed(const Duration(milliseconds: 24));
+    }
+    if (mounted && _isPlaying) await _audioPlayer.setVolume(1.0);
+  }
+
+  Future<void> _toggleTrackPlay() async {
+    final next = !_isPlaying;
     setState(() {
-      _isPlaying = !_isPlaying;
+      _isPlaying = next;
     });
-    
-    if (_isPlaying) {
-      _rotationController.repeat();
-      _startTrackProgress();
-      await _playWithDelay();
-    } else {
+
+    if (!next) {
       _rotationController.stop();
       _progressTimer?.cancel();
+      // Pause, not stop: the next tap has to continue where this one left.
       await _audioPlayer.pause();
+      return;
+    }
+
+    _rotationController.repeat();
+    _startTrackProgress();
+    if (_trackLoaded) {
+      await _audioPlayer.resume();
+      await _audioPlayer.setVolume(1.0);
+    } else {
+      await _playCurrentTrack();
     }
   }
 
@@ -569,11 +622,13 @@ class _MyHomePageState extends State<MyHomePage>
       _currentTime = '0:00';
       _audioDuration = null;
     });
+    _trackLoaded = false;
     if (_isPlaying) {
       _startTrackProgress();
-      _playWithDelay();
+      unawaited(_playCurrentTrack());
     } else {
-      _audioPlayer.stop();
+      // Nothing is playing: the next tap starts the freshly selected track.
+      unawaited(_audioPlayer.stop());
     }
   }
 
@@ -640,11 +695,41 @@ class _MyHomePageState extends State<MyHomePage>
     return '$hour:$minute';
   }
 
+  /// Closes whatever would overlap [opening] and minimises the settings
+  /// window when the opening surface needs the middle of the screen.
+  ///
+  /// The rule lives in [PanelPolicy]; this only translates it into morph
+  /// calls. Before this existed, opening the settings window left the
+  /// launcher (the nine dots) standing behind it.
+  void _applyPanelPlan(ShellPanel opening) {
+    final plan = PanelPolicy.plan(opening);
+    for (final panel in plan.toClose) {
+      switch (panel) {
+        case ShellPanel.menu:
+          if (_isMenuOpen) _menuMorph?.close();
+        case ShellPanel.launcher:
+          if (_isLauncherOpen) _launcherMorph?.close();
+        case ShellPanel.brightness:
+          if (_isBrightnessOpen) _brightnessMorph?.close();
+        case ShellPanel.volume:
+          if (_isVolumeOpen) _volumeMorph?.close();
+        case ShellPanel.player:
+          if (_isPlayerOpen) _playerMorph?.close();
+        case ShellPanel.settings:
+          break;
+      }
+    }
+    if (plan.minimizeSettings && _isSettingsOpen && !_isSettingsMinimized) {
+      // The window animates itself into the dock; its onMinimize callback
+      // flips the flags when the spring lands.
+      _settingsController.minimize();
+    }
+  }
+
   void _toggleMenu() {
     final m = _menuMorph;
     if (m == null) return;
-    if (_isPlayerOpen) _playerMorph?.close();
-    if (_isBrightnessOpen) _brightnessMorph?.close();
+    _applyPanelPlan(ShellPanel.menu);
     m.toggle();
     setState(() {});
   }
@@ -658,8 +743,7 @@ class _MyHomePageState extends State<MyHomePage>
   void _toggleBrightness() {
     final m = _brightnessMorph;
     if (m == null) return;
-    if (_isPlayerOpen) _playerMorph?.close();
-    if (_isMenuOpen) _menuMorph?.close();
+    _applyPanelPlan(ShellPanel.brightness);
     m.toggle();
     setState(() {});
   }
@@ -667,8 +751,7 @@ class _MyHomePageState extends State<MyHomePage>
   void _togglePlayer() {
     final m = _playerMorph;
     if (m == null) return;
-    if (_isBrightnessOpen) _brightnessMorph?.close();
-    if (_isMenuOpen) _menuMorph?.close();
+    _applyPanelPlan(ShellPanel.player);
     m.toggle();
     setState(() {});
   }
@@ -678,12 +761,10 @@ class _MyHomePageState extends State<MyHomePage>
   void _toggleVolume() {
     final m = _volumeMorph;
     if (m == null) return;
-    if (_isBrightnessOpen) _brightnessMorph?.close();
-    if (_isMenuOpen) _menuMorph?.close();
-    if (_isPlayerOpen) _playerMorph?.close();
+    _applyPanelPlan(ShellPanel.volume);
     if (!m.active) {
       // Read the real device state so the panel opens honest.
-      final sound = SoundControl.instance;
+      final sound = _soundSource;
       sound.refresh();
       setState(() {
         _volume = sound.volume;
@@ -697,10 +778,7 @@ class _MyHomePageState extends State<MyHomePage>
   void _toggleLauncher() {
     final m = _launcherMorph;
     if (m == null) return;
-    if (_isBrightnessOpen) _brightnessMorph?.close();
-    if (_isMenuOpen) _menuMorph?.close();
-    if (_isPlayerOpen) _playerMorph?.close();
-    if (_isVolumeOpen) _volumeMorph?.close();
+    _applyPanelPlan(ShellPanel.launcher);
     m.toggle();
     setState(() {});
   }
@@ -767,7 +845,9 @@ class _MyHomePageState extends State<MyHomePage>
           _LauncherTile(
             icon: Icons.settings_outlined,
             label: 'Настройки',
-            onTap: () => unawaited(openSettingsPage('ms-settings:')),
+            // The shell's own settings, not the Windows page: the launcher
+            // is the shell, so its "Settings" tile must stay inside it.
+            onTap: () => _openSettingsAt(null),
           ),
         ],
       ];
@@ -814,6 +894,9 @@ class _MyHomePageState extends State<MyHomePage>
 
   /// Opens the shell's own settings, optionally at a given section.
   void _openSettingsAt(String? section) {
+    // The launcher, the power menu and the top-bar flyouts all have to get
+    // out of the way: the settings window lands in the middle of the screen.
+    _applyPanelPlan(ShellPanel.settings);
     setState(() {
       _settingsSection = section;
       _isSettingsOpen = true;
@@ -826,10 +909,7 @@ class _MyHomePageState extends State<MyHomePage>
 
   void _toggleSettings() {
     if (_isSettingsOpen && !_isSettingsMinimized) {
-      setState(() {
-        _isSettingsOpen = false;
-        _isSettingsMinimized = false;
-      });
+      _settingsController.close();
       return;
     }
     _openSettingsAt(null);
@@ -837,8 +917,8 @@ class _MyHomePageState extends State<MyHomePage>
 
   /// Reads both radios from the system, so the top bar shows the truth.
   Future<void> _refreshRadios() async {
-    final wifi = await RadioControl.instance.status(RadioKind.wifi);
-    final bluetooth = await RadioControl.instance.status(RadioKind.bluetooth);
+    final wifi = await _radioSource.status(RadioKind.wifi);
+    final bluetooth = await _radioSource.status(RadioKind.bluetooth);
     if (!mounted) return;
     setState(() {
       _wifiStatus = wifi;
@@ -957,7 +1037,7 @@ class _MyHomePageState extends State<MyHomePage>
 
   @override
   Future<double> setVolume(double value) async {
-    final sound = SoundControl.instance;
+    final sound = _soundSource;
     sound.volume = value;
     if (mounted) {
       setState(() {
@@ -970,7 +1050,7 @@ class _MyHomePageState extends State<MyHomePage>
 
   @override
   Future<double> stepVolume(double direction) async {
-    final sound = SoundControl.instance;
+    final sound = _soundSource;
     sound.stepVolume(direction);
     if (mounted) {
       setState(() {
@@ -983,7 +1063,7 @@ class _MyHomePageState extends State<MyHomePage>
 
   @override
   Future<bool> setMuted(bool muted) async {
-    final sound = SoundControl.instance;
+    final sound = _soundSource;
     sound.muted = muted;
     if (mounted) {
       setState(() {
@@ -996,7 +1076,7 @@ class _MyHomePageState extends State<MyHomePage>
 
   @override
   Future<RadioStatus> setRadioPower(RadioKind kind, bool on) async {
-    final result = await RadioControl.instance.setPower(kind, on);
+    final result = await _radioSource.setPower(kind, on);
     if (mounted) {
       setState(() {
         if (kind == RadioKind.wifi) {
@@ -1327,6 +1407,7 @@ class _MyHomePageState extends State<MyHomePage>
                               onEnter: (event) => setState(() => _isBluetoothHovered = true),
                               onExit: (event) => setState(() => _isBluetoothHovered = false),
                               child: GestureDetector(
+                                key: const ValueKey('topbar-bluetooth'),
                                 // The radio lives in the shell's own settings
                                 // now: the button takes the user there, and
                                 // the switch there really flips the radio.
@@ -1354,6 +1435,7 @@ class _MyHomePageState extends State<MyHomePage>
                               onEnter: (event) => setState(() => _isVolumeHovered = true),
                               onExit: (event) => setState(() => _isVolumeHovered = false),
                               child: GestureDetector(
+                                key: const ValueKey('topbar-volume'),
                                 // Sound only: the panel opens, the desktop
                                 // stays exactly where it is.
                                 onTap: _toggleVolume,
@@ -1378,6 +1460,7 @@ class _MyHomePageState extends State<MyHomePage>
                               onEnter: (event) => setState(() => _isWifiHovered = true),
                               onExit: (event) => setState(() => _isWifiHovered = false),
                               child: GestureDetector(
+                                key: const ValueKey('topbar-wifi'),
                                 onTap: () => _openSettingsAt('wifi'),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 150),
@@ -1538,7 +1621,7 @@ class _MyHomePageState extends State<MyHomePage>
                           IconButton(
                             onPressed: () {
                               setState(() {
-                                _warmth = 0.5;
+                                _warmth = 0.0;
                               });
                               _resetGamma?.call();
                             },
@@ -1571,7 +1654,7 @@ class _MyHomePageState extends State<MyHomePage>
                     children: [
                       IconButton(
                         onPressed: () {
-                          final sound = SoundControl.instance;
+                          final sound = _soundSource;
                           setState(() {
                             sound.muted = !sound.muted;
                             _muted = sound.muted;
@@ -1591,7 +1674,7 @@ class _MyHomePageState extends State<MyHomePage>
                         child: WaveSlider(
                           value: _muted ? 0.0 : _volume,
                           onChanged: (value) {
-                            final sound = SoundControl.instance;
+                            final sound = _soundSource;
                             setState(() {
                               sound.volume = value;
                               _volume = sound.volume;
@@ -1722,6 +1805,32 @@ class _MyHomePageState extends State<MyHomePage>
               child: SettingsApp(
                 initialPosition: _settingsPosition,
                 initialSection: _settingsSection,
+                controller: _settingsController,
+                radio: widget.radio,
+                sound: widget.sound,
+                display: DisplaySettings(
+                  brightness: _brightness,
+                  contrast: _contrast,
+                  warmth: _warmth,
+                  onBrightness: (value) {
+                    setState(() {
+                      _brightness = value;
+                    });
+                    _setSystemBrightness(value);
+                  },
+                  onContrast: (value) {
+                    setState(() {
+                      _contrast = value;
+                    });
+                    _setSystemContrast(value);
+                  },
+                  onWarmth: (value) {
+                    setState(() {
+                      _warmth = value;
+                    });
+                    _setSystemWarmth(value);
+                  },
+                ),
                 onPositionChanged: (pos) {
                   _settingsPosition = pos;
                 },
@@ -1764,6 +1873,7 @@ class _MyHomePageState extends State<MyHomePage>
                   selectedTrack: _selectedTrack,
                   progress: _trackProgress,
                   tracks: _tracks,
+                  covers: _covers,
                   currentTime: _currentTime,
                   totalDuration: _totalDuration,
                   onTogglePlay: _toggleTrackPlay,
@@ -1807,6 +1917,7 @@ class _MyHomePageState extends State<MyHomePage>
                         MouseRegion(
                           cursor: SystemMouseCursors.click,
                           child: GestureDetector(
+                            key: const ValueKey('dock-settings'),
                             onTap: () {
                               setState(() {
                                 _isSettingsMinimized = false;
@@ -1841,6 +1952,7 @@ class _MyHomePageState extends State<MyHomePage>
                             onEnter: (event) => setState(() => _isDotsHovered = true),
                             onExit: (event) => setState(() => _isDotsHovered = false),
                             child: GestureDetector(
+                              key: const ValueKey('launcher-pill'),
                               onTap: _toggleLauncher,
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),

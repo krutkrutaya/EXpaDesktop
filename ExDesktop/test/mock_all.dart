@@ -9,11 +9,13 @@
 // ignore_for_file: avoid_print
 
 import 'liquid_glass_mock_check.dart' as physics;
+import 'shell_check.dart' as shell;
 import 'system_mock_check.dart' as system;
 import 'mock_harness.dart';
 
 Future<void> main() async {
   physics.runPhysicsChecks();
+  shell.runShellChecks();
   await system.runSystemChecks();
   finish('EXpaDesktop');
 }

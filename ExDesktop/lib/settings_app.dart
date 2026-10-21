@@ -20,6 +20,39 @@ import 'radio_control.dart';
 import 'sound_control.dart';
 import 'system_actions.dart';
 
+/// The display parameters the shell owns, plus the callbacks that apply them.
+class DisplaySettings {
+  final double brightness;
+  final double contrast;
+  final double warmth;
+  final ValueChanged<double> onBrightness;
+  final ValueChanged<double> onContrast;
+  final ValueChanged<double> onWarmth;
+
+  const DisplaySettings({
+    required this.brightness,
+    required this.contrast,
+    required this.warmth,
+    required this.onBrightness,
+    required this.onContrast,
+    required this.onWarmth,
+  });
+}
+
+/// Drives the window's own open/close springs from the shell.
+///
+/// The shell used to flip _isSettingsOpen off, which made the window vanish
+/// instead of shrinking back into the dock.
+class SettingsAppController {
+  _SettingsAppState? _state;
+
+  /// Shrinks the window into the dock.
+  void minimize() => _state?._minimizeWithAnimation();
+
+  /// Shrinks the window and closes it.
+  void close() => _state?._closeWithAnimation();
+}
+
 /// One row of the settings list.
 class SettingsItem {
   /// Unique id of the row.
@@ -67,6 +100,8 @@ class SettingsApp extends StatefulWidget {
   /// the widget tests pass recorders instead.
   final RadioSource? radio;
   final SoundSource? sound;
+  final DisplaySettings? display;
+  final SettingsAppController? controller;
 
   const SettingsApp({
     super.key,
@@ -77,6 +112,8 @@ class SettingsApp extends StatefulWidget {
     this.initialSection,
     this.radio,
     this.sound,
+    this.display,
+    this.controller,
   });
 
   @override
@@ -139,6 +176,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         label: 'Display & monitor',
         section: 'display',
         uri: 'ms-settings:display',
+        native: true,
       ),
       SettingsItem(
         id: 'accessibility',
@@ -201,7 +239,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         id: 'effects',
         icon: Icons.animation,
         label: 'Visual effects & animations',
-        section: 'display',
+        section: 'effects',
         uri: 'ms-settings:easeofaccess-display',
       ),
     ]),
@@ -273,6 +311,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _position = widget.initialPosition;
+    widget.controller?._state = this;
     _selectedId = _idForSection(widget.initialSection);
     _ticker = createTicker(_onTick);
     _spring.target = 1;
@@ -296,6 +335,7 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
 
   @override
   void dispose() {
+    if (widget.controller?._state == this) widget.controller?._state = null;
     _ticker.dispose();
     super.dispose();
   }
@@ -590,7 +630,8 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
                       ),
                     ),
                   ),
-                  if (item.native)
+                  if (item.native &&
+                      (item.section == 'wifi' || item.section == 'bluetooth'))
                     Icon(
                       _radioIsOn(item.section)
                           ? Icons.check_circle
@@ -639,6 +680,8 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
         return _buildRadioPane(item, RadioKind.wifi);
       case 'bluetooth':
         return _buildRadioPane(item, RadioKind.bluetooth);
+      case 'display':
+        return _buildDisplayPane(item);
       default:
         return _buildWindowsPane(item);
     }
@@ -773,6 +816,46 @@ class _SettingsAppState extends State<SettingsApp> with SingleTickerProviderStat
       ],
     );
   }
+
+  /// The display parameters: brightness and contrast through DDC/CI, warmth
+  /// through the gamma ramp. The same values the top-left flyout shows.
+  Widget _buildDisplayPane(SettingsItem item) {
+    final display = widget.display;
+    if (display == null) return _buildWindowsPane(item);
+    return _DetailScaffold(
+      item: item,
+      children: [
+        DisplaySlider(
+          label: 'Яркость',
+          value: display.brightness,
+          onChanged: display.onBrightness,
+        ),
+        const SizedBox(height: 10),
+        DisplaySlider(
+          label: 'Контраст',
+          value: display.contrast,
+          onChanged: display.onContrast,
+        ),
+        const SizedBox(height: 10),
+        DisplaySlider(
+          label: 'Теплота',
+          value: display.warmth,
+          onChanged: display.onWarmth,
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Яркость и контраст идут через DDC/CI, теплота — через гамму. '
+          'Теплота 0% — нейтральный экран.',
+          style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
+        ),
+        const Spacer(),
+        _WindowsLink(
+          label: 'Открыть в Параметрах Windows',
+          uri: item.uri,
+        ),
+      ],
+    );
+  }
 }
 
 /// The frame of every detail pane: the title of the item and its children.
@@ -849,6 +932,47 @@ class _DetailRow extends StatelessWidget {
           ),
         ),
         if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+/// A labelled 0..1 slider for the display pane.
+class DisplaySlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const DisplaySlider({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const Spacer(),
+            Text(
+              '${(value * 100).round()}%',
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 30,
+          child: WaveSlider(value: value, onChanged: onChanged),
+        ),
       ],
     );
   }
