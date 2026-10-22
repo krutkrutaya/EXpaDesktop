@@ -14,6 +14,11 @@ class MorphPanelController extends ChangeNotifier {
   Ticker? _ticker;
   double _lastElapsed = 0;
 
+  /// How fast the current motion is stepped. A dismissed menu can shrink
+  /// away faster than it opened (see [close]); it is the same spring, played
+  /// at a different speed.
+  double _timeScale = 1.0;
+
   Rect4 _buttonRect;
   Rect4 _menuRect;
   double _menuRadius;
@@ -47,7 +52,7 @@ class MorphPanelController extends ChangeNotifier {
     var dt = seconds - _lastElapsed;
     _lastElapsed = seconds;
     if (dt < 0) dt = 0;
-    final frame = motion.step(dt);
+    final frame = motion.step(dt * _timeScale);
     _frame = frame;
     if (frame.done) {
       if (motion.opening) {
@@ -67,6 +72,7 @@ class MorphPanelController extends ChangeNotifier {
     _ticker?.stop();
     _motion = null;
     _lastElapsed = 0;
+    _timeScale = 1.0;
   }
 
   void open() {
@@ -87,9 +93,15 @@ class MorphPanelController extends ChangeNotifier {
     _start();
   }
 
-  void close() {
+  /// Shrinks the panel back into its button.
+  ///
+  /// [speed] steps the same spring faster, for the case where a menu is
+  /// dismissed because something else is opening: the window behind it should
+  /// not have to wait through the full morph to be seen.
+  void close({double speed = 1.0}) {
     if (_frame == null && !_isOpen) return;
     final prev = _motion;
+    _timeScale = speed.clamp(1.0, 4.0);
     _motion = MenuMorphMotion(
       false,
       _buttonRect,

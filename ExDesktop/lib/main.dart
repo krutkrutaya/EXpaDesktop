@@ -559,14 +559,27 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   /// Closes every floating panel; used when an app window is opened.
-  void _closePanels() {
-    if (_isMenuOpen) _menuMorph?.close();
-    if (_isLauncherOpen) _launcherMorph?.close();
-    if (_isBrightnessOpen) _brightnessMorph?.close();
-    if (_isVolumeOpen) _volumeMorph?.close();
-    if (_isPlayerOpen) _playerMorph?.close();
-    if (_isDesktopsOpen) _desktopsMorph?.close();
+  ///
+  /// [fast] plays the same shrink-back spring at 2.6x. A menu that is being
+  /// dismissed because an app is launching should not sit over the middle of
+  /// the screen for the whole morph while the window animates behind it.
+  void _closePanels({bool fast = false}) {
+    final speed = fast ? 2.6 : 1.0;
+    if (_isMenuOpen) _menuMorph?.close(speed: speed);
+    if (_isLauncherOpen) _launcherMorph?.close(speed: speed);
+    if (_isBrightnessOpen) _brightnessMorph?.close(speed: speed);
+    if (_isVolumeOpen) _volumeMorph?.close(speed: speed);
+    if (_isPlayerOpen) _playerMorph?.close(speed: speed);
+    if (_isDesktopsOpen) _desktopsMorph?.close(speed: speed);
   }
+
+  bool get _isAnyPanelOpen =>
+      _isMenuOpen ||
+      _isLauncherOpen ||
+      _isBrightnessOpen ||
+      _isVolumeOpen ||
+      _isPlayerOpen ||
+      _isDesktopsOpen;
 
   void _dismissFloatingSurfaces() {
     if (!_isVolumeOpen &&
@@ -642,13 +655,31 @@ class _MyHomePageState extends State<MyHomePage>
   // ---- apps -----------------------------------------------------------------
 
   /// Opens (or focuses) an app window on the current desktop.
+  ///
+  /// If a panel was covering the middle of the screen, it is dismissed at
+  /// 2.6x speed and the window starts its own entrance ~150 ms later: by then
+  /// the menu has shrunk out of the way, so the spring is actually visible.
+  /// Without this, launching from the launcher played the whole entrance
+  /// behind the closing menu and looked like the window simply appeared.
   void _openApp(ShellApp app, {String? section}) {
-    _closePanels();
+    final panelWasOpen = _isAnyPanelOpen;
+    _closePanels(fast: panelWasOpen);
     if (app == ShellApp.settings && section != null) {
       _settingsNav.show(section);
     }
-    _windows.open(app);
-    setState(() {});
+    final manager = _windows;
+
+    void open() {
+      if (!mounted) return;
+      manager.open(app);
+      setState(() {});
+    }
+
+    if (panelWasOpen) {
+      Future<void>.delayed(const Duration(milliseconds: 150), open);
+    } else {
+      open();
+    }
   }
 
   /// The dock's running-window buttons: focus, or minimize if already focused.
@@ -662,20 +693,14 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   void _openSettingsAt(String? section) {
-    _closePanels();
-    _settingsNav.show(section);
-    _windows.open(ShellApp.settings);
-    setState(() {});
+    _openApp(ShellApp.settings, section: section);
     if (section == 'wifi' || section == 'bluetooth') {
       unawaited(_refreshRadios());
     }
   }
 
-  /// The Tracks pill: close the flyout and open the Musics window.
-  void _openMusics() {
-    _playerMorph?.close();
-    _openApp(ShellApp.musics);
-  }
+  /// The Tracks pill: the player flyout dismisses itself and Musics opens.
+  void _openMusics() => _openApp(ShellApp.musics);
 
   Future<Uint8List?> _captureShell() async {
     final boundary = _shellKey.currentContext?.findRenderObject()
@@ -1550,29 +1575,16 @@ class _MyHomePageState extends State<MyHomePage>
                     padding: const EdgeInsets.symmetric(vertical: 5.0),
                     child: Column(
                       children: [
-                        if (openWindows.isNotEmpty)
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxHeight: 176),
-                            child: SingleChildScrollView(
-                              child: Column(
-                                children: [
-                                  for (final window in openWindows)
-                                    _DockTask(
-                                      key: ValueKey(
-                                        window.appId == 'settings'
-                                            ? 'dock-settings'
-                                            : 'dock-app-${window.appId}',
-                                      ),
-                                      icon: iconForApp(window.app),
-                                      active: manager.activeId == window.id &&
-                                          !window.minimized,
-                                      minimized: window.minimized,
-                                      onTap: () => _toggleAppWindow(window),
-                                    ),
-                                ],
-                              ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 176),
+                          child: SingleChildScrollView(
+                            child: _DockTasks(
+                              windows: openWindows,
+                              activeId: manager.activeId,
+                              onTap: _toggleAppWindow,
                             ),
                           ),
+                        ),
                         Expanded(
                           child: Center(
                             child: Listener(
@@ -1972,10 +1984,101 @@ class _WaybarButtonState extends State<_WaybarButton> {
 }
 
 /// One running window in the dock: click to focus, click again to minimize.
+/// The dock's running-window strip.
+///
+/// Stable order (creation, not z-order), and every icon arrives and leaves
+/// with its own little spring instead of popping in on the frame a window
+/// opens. A leaving icon stays in the list until its fade finishes.
+class _DockTasks extends StatefulWidget {
+  final List<AppWindow> windows;
+  final int? activeId;
+  final ValueChanged<AppWindow> onTap;
+
+  const _DockTasks({
+    required this.windows,
+    required this.activeId,
+    required this.onTap,
+  });
+
+  @override
+  State<_DockTasks> createState() => _DockTasksState();
+}
+
+class _DockTasksState extends State<_DockTasks> {
+  final List<AppWindow> _shown = [];
+  final Set<int> _leaving = {};
+
+  static List<AppWindow> _sorted(List<AppWindow> windows) =>
+      List<AppWindow>.from(windows)..sort((a, b) => a.id.compareTo(b.id));
+
+  @override
+  void initState() {
+    super.initState();
+    _shown.addAll(_sorted(widget.windows));
+  }
+
+  @override
+  void didUpdateWidget(covariant _DockTasks oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final current = _sorted(widget.windows);
+    final currentIds = current.map((w) => w.id).toSet();
+
+    // A window that came back (restored) stops leaving.
+    for (final id in currentIds) {
+      _leaving.remove(id);
+    }
+
+    // A window that closed fades out first; the list drops it after the fade.
+    for (final window in _shown) {
+      if (currentIds.contains(window.id) || _leaving.contains(window.id)) {
+        continue;
+      }
+      _leaving.add(window.id);
+      Timer(const Duration(milliseconds: 210), () {
+        if (!mounted) return;
+        setState(() {
+          _shown.removeWhere((w) => w.id == window.id);
+          _leaving.remove(window.id);
+        });
+      });
+    }
+
+    final leaving = _shown.where((w) => !currentIds.contains(w.id)).toList();
+    _shown
+      ..clear()
+      ..addAll(current)
+      ..addAll(leaving);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_shown.isEmpty) return const SizedBox(width: 44);
+    return Column(
+      children: [
+        for (final window in _shown)
+          _DockTask(
+            key: ValueKey(
+              window.appId == 'settings'
+                  ? 'dock-settings'
+                  : 'dock-app-${window.appId}',
+            ),
+            icon: iconForApp(window.app),
+            active: widget.activeId == window.id && !window.minimized,
+            minimized: window.minimized,
+            leaving: _leaving.contains(window.id),
+            onTap: () => widget.onTap(window),
+          ),
+      ],
+    );
+  }
+}
+
+/// One running window in the dock: click to focus, click again to minimize.
 class _DockTask extends StatefulWidget {
   final IconData icon;
   final bool active;
   final bool minimized;
+  final bool leaving;
   final VoidCallback onTap;
 
   const _DockTask({
@@ -1983,6 +2086,7 @@ class _DockTask extends StatefulWidget {
     required this.icon,
     required this.active,
     required this.minimized,
+    required this.leaving,
     required this.onTap,
   });
 
@@ -1990,11 +2094,67 @@ class _DockTask extends StatefulWidget {
   State<_DockTask> createState() => _DockTaskState();
 }
 
-class _DockTaskState extends State<_DockTask> {
+class _DockTaskState extends State<_DockTask>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _reveal = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+    reverseDuration: const Duration(milliseconds: 190),
+  )..forward();
+
+  late final CurvedAnimation _fade = CurvedAnimation(
+    parent: _reveal,
+    curve: Curves.easeOutCubic,
+    reverseCurve: Curves.easeInCubic,
+  );
+
+  late final CurvedAnimation _pop = CurvedAnimation(
+    parent: _reveal,
+    curve: Curves.easeOutBack,
+    reverseCurve: Curves.easeInCubic,
+  );
+
+  late final Animation<Offset> _slide = Tween<Offset>(
+    begin: const Offset(0.55, 0),
+    end: Offset.zero,
+  ).animate(_fade);
+
   bool _hovered = false;
 
   @override
+  void didUpdateWidget(covariant _DockTask oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.leaving == oldWidget.leaving) return;
+    if (widget.leaving) {
+      _reveal.reverse();
+    } else {
+      _reveal.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    _pop.dispose();
+    _reveal.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.55, end: 1.0).animate(_pop),
+          child: _content(),
+        ),
+      ),
+    );
+  }
+
+  Widget _content() {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -2044,7 +2204,6 @@ class _DockTaskState extends State<_DockTask> {
     );
   }
 }
-
 /// A dock icon with the shell's hover/press feel.
 class PanelIcon extends StatefulWidget {
   final IconData icon;

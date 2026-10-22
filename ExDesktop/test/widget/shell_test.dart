@@ -59,9 +59,11 @@ void main() {
     await _settle(tester);
     await tester.tap(find.byKey(const ValueKey('launcher-app-calculator')));
 
-    // Two frames in, the window exists but is still transparent and shifted.
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 16));
+    // The launcher shrinks away first (it plays its close at 2.6x); the window
+    // starts its own entrance ~150 ms later, so it is not hidden behind the
+    // menu. A few frames into that entrance it is still transparent.
+    await tester.pump(const Duration(milliseconds: 160));
+    await tester.pump(const Duration(milliseconds: 32));
     final opacity = tester.widget<Opacity>(
       find.descendant(
         of: find.byKey(const ValueKey('window-1')),
@@ -78,6 +80,38 @@ void main() {
       ).first,
     );
     expect(settled.opacity, 1.0);
+  });
+
+  testWidgets('the dock icon joins with the window, it does not pop in',
+      (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('launcher-app-calculator')));
+
+    // Right after the window starts, its dock icon is still fading in.
+    await tester.pump(const Duration(milliseconds: 160));
+    final fade = tester.widget<FadeTransition>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('dock-app-calculator')),
+            matching: find.byType(FadeTransition),
+          )
+          .first,
+    );
+    expect(fade.opacity.value, lessThan(1.0));
+
+    await _settle(tester);
+    final settled = tester.widget<FadeTransition>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('dock-app-calculator')),
+            matching: find.byType(FadeTransition),
+          )
+          .first,
+    );
+    expect(settled.opacity.value, 1.0);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the calculator buttons really calculate', (tester) async {

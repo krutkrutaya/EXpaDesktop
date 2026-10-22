@@ -203,7 +203,7 @@ ExDesktop/
     ├── system_mock_check.dart        # 🧪 476 system + assistant checks
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics checks
     └── widget/
-        ├── shell_test.dart           # 🧪 22 shell widget tests
+        ├── shell_test.dart           # 🧪 23 shell widget tests
         ├── settings_view_test.dart   # 🧪 13 settings widget tests
         ├── player_controller_test.dart # 🧪 10 player tests
         ├── apps_extra_test.dart      # 🧪 4 browser/notepad tests
@@ -300,11 +300,11 @@ copies the DLL next to the exe when it is there, and skips it otherwise.
 Widget tests run under `flutter test`; the window manager, app models, player
 math, system layer and physics suites are plain Dart scripts (no Flutter
 needed). `mock_all.dart` runs all of them and prints a single total —
-**1185 checks**, plus **53 widget tests**.
+**1185 checks**, plus **54 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 53 widget tests
+flutter test                                 # 54 widget tests
 flutter analyze                              # No issues found
 dart run test/mock_all.dart                  # 1185 mock checks
 dart run test/desktop_check.dart             # windows: 117 checks
