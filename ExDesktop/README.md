@@ -14,8 +14,8 @@ how the system layer talks to Windows, and what the tests cover — lives in the
 ```powershell
 flutter pub get
 flutter analyze            # should print: No issues found!
-flutter test               # 61 widget tests
-dart run test/mock_all.dart   # 1254 mock checks (plain Dart, no Flutter needed)
+flutter test               # 72 widget tests
+dart run test/mock_all.dart   # 1373 mock checks (plain Dart, no Flutter needed)
 
 flutter run -d windows     # debug, hot reload
 flutter build windows --release
@@ -47,14 +47,14 @@ Requirements for the Windows build:
 | Path | What |
 |---|---|
 | `lib/main.dart` | shell: wallpapers, clock, panels, dock, command line |
-| `lib/settings_app.dart` | settings window with the live parameter panes |
+| `lib/desktop/apps/settings_view.dart` | settings: sound, display, appearance, date & time, updates |\n| `lib/shell_prefs.dart` | persistent shell preferences (slideshow, waybar, zone, display) |
 | `lib/sound_control.dart` | the single owner of volume/mute |
 | `lib/radio_control.dart` | Wi-Fi/Bluetooth state and switching |
 | `lib/radio_script.dart` | PowerShell bridge to `Windows.Devices.Radios` |
 | `lib/hidden_process.dart` | console tools with no console window |
 | `lib/assistant_prompt.dart` | the assistant's system prompt + catalog |
-| `lib/command_router.dart` | Russian phrases → intents → machine actions |
+| `lib/command_router.dart` | English + Russian phrases → intents → machine actions |
 | `lib/liquid_glass/` | the panel morph/physics |
-| `lib/rust/` | brightness DLL (DDC/CI + gamma) |
+| `lib/rust/` | brightness (DDC/CI + gamma), music_scan, sysctl (audio/Wi-Fi/display/zones) |
 | `windows/` | the Windows runner (CMake + C++ host) |
 | `test/` | widget tests and the pure-Dart mock suites |

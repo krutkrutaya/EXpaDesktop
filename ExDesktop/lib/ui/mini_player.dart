@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 
 import '../playback/player_controller.dart';
+import '../i18n.dart';
 import '../track_art.dart';
 
 class MiniPlayer extends StatefulWidget {
@@ -28,8 +29,14 @@ class MiniPlayer extends StatefulWidget {
 
 class _MiniPlayerState extends State<MiniPlayer> {
   bool _hovered = false;
+  bool _pressed = false;
 
   PlayerController get _player => widget.player;
+
+  /// The artwork's corner radius. Hover rounds it from a circle to the glass
+  /// radius; a press tightens it further, so the button answers the click
+  /// while the pointer is still on it.
+  double get _artRadius => _pressed ? 7 : (_hovered ? 10 : 19);
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +47,9 @@ class _MiniPlayerState extends State<MiniPlayer> {
       child: GestureDetector(
         key: const ValueKey('mini-player'),
         behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
         onTap: widget.onOpen,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
@@ -65,7 +75,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          track?.title ?? 'Nothing playing',
+                          track?.title ?? Loc.t('Nothing playing', 'Ничего играет'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -75,7 +85,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
                           ),
                         ),
                         Text(
-                          track?.artist ?? 'Musics',
+                          track?.artist ?? Loc.t('Musics', 'Музыка'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -107,11 +117,21 @@ class _MiniPlayerState extends State<MiniPlayer> {
         animation: _player,
         builder: (context, _) {
           final track = _player.track;
-          return TrackArt(
-            cover: track?.coverIn(_player.covers),
-            avatar: track?.avatar,
-            size: 38,
-            borderRadius: BorderRadius.circular(19),
+          // The radius is part of this builder, not a side channel: the old
+          // version wrote it into a field from a sibling TweenAnimationBuilder
+          // that rebuilt a zero-size box, so the artwork never changed.
+          return TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 19, end: _artRadius),
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            builder: (context, radius, __) {
+              return TrackArt(
+                cover: track?.coverIn(_player.covers),
+                avatar: track?.avatar,
+                size: 38,
+                borderRadius: BorderRadius.circular(radius),
+              );
+            },
           );
         },
       ),

@@ -13,6 +13,7 @@ IconData iconForApp(ShellApp app) => switch (app) {
       ShellApp.tasks => Icons.checklist_outlined,
       ShellApp.browser => Icons.public_outlined,
       ShellApp.musics => Icons.music_note_outlined,
+      ShellApp.configs => Icons.spa_outlined,// the leaf tile requested next to Musics
       ShellApp.settings => Icons.settings_outlined,
       ShellApp.terminal => Icons.terminal_outlined,
     };
@@ -27,6 +28,7 @@ Color accentForApp(ShellApp app) => switch (app) {
       ShellApp.tasks => const Color(0xFFB49AFF),
       ShellApp.browser => const Color(0xFF9AB8FF),
       ShellApp.musics => const Color(0xFFFFA59A),
+      ShellApp.configs => const Color(0xFF9AFFE0),
       ShellApp.settings => const Color(0xFFD0D0D0),
       ShellApp.terminal => const Color(0xFF9AFFA5),
     };

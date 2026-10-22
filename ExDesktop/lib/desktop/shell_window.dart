@@ -1,14 +1,16 @@
 // The chrome around every in-app window, and the way it arrives.
 //
-// A window slides out of the right dock rather than appearing at its final
-// place: the entrance is a 300 ms spring (scale + slide + fade), the close is
-// a quick pull back towards the dock, and minimizing is the same motion with
-// the window left hidden. The manager owns the data; this widget owns the
-// frames. When the exit animation lands, it tells the manager, so a window is
-// never removed while it is still visible.
+// Opening and restoring is a macOS genie: the window un-pinches out of the
+// dock icon (and folds back into it when minimized). Closing keeps its own
+// quick slide-and-fade. The manager owns the data; this widget owns the
+// frames. When the minimize animation lands, it tells the manager, so a
+// window is never hidden while it is still visible.
+
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'app_catalog.dart';
 import 'app_icons.dart';
 import 'window_manager.dart';
 
@@ -60,6 +62,11 @@ class ShellWindow extends StatefulWidget {
     required this.onFocus,
   });
 
+  /// Ask the live window to fold into the dock. Called by the dock's running
+  /// app button; the widget state plays the genie and then minimizes.
+  static void minimizeAnimated(WindowManager manager, int id) =>
+      _ShellWindowState.minimizeAnimated(manager, id);
+
   @override
   State<ShellWindow> createState() => _ShellWindowState();
 }
@@ -68,13 +75,53 @@ class _ShellWindowState extends State<ShellWindow>
     with TickerProviderStateMixin {
   late final AnimationController _entrance = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 300),
-  )..forward();
+    // Fresh opens are a short pop, not a genie: a click should feel answered
+    // in the first frame, not after a trip from the dock.
+    duration: const Duration(milliseconds: 260),
+  );
+
+  /// Restoring a minimized window is the macOS genie: the pinched window
+  /// unfolds out of its dock icon.
+  late final AnimationController _restore = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 360),
+  );
 
   late final AnimationController _exit = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 190),
+    // Long enough to read: the old 240 ms snapped the window away before the
+    // eye could follow it.
+    duration: const Duration(milliseconds: 320),
   );
+
+  /// The minimize pinch: the genie folding the window into its dock icon.
+  late final AnimationController _genie = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 360),
+  );
+
+  bool _minimizing = false;
+  bool _fromRestore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final rect = _rectOf(widget.window);
+    _displayedRect = rect;
+    _fromRect = rect;
+    _toRect = rect;
+    _states[widget.window.id] = this;
+    _fromRestore = widget.window.restoreCount > 0;
+    if (_fromRestore) {
+      // Land the entrance at full size when the genie finishes; the builder
+      // falls through to the entrance branch once _restore is idle.
+      _restore.forward().whenComplete(() {
+        if (mounted) _entrance.value = 1;
+      });
+    } else {
+      _entrance.forward();
+    }
+  }
 
   /// Maximize / restore glides between the two rectangles instead of snapping.
   late final AnimationController _rectMove = AnimationController(
@@ -97,20 +144,26 @@ class _ShellWindowState extends State<ShellWindow>
         window.height,
       );
 
-  @override
-  void initState() {
-    super.initState();
-    final rect = _rectOf(widget.window);
-    _displayedRect = rect;
-    _fromRect = rect;
-    _toRect = rect;
-  }
+  bool get _animating =>
+      _entrance.isAnimating ||
+      _restore.isAnimating ||
+      _exit.isAnimating ||
+      _genie.isAnimating;
+
+  /// Live states of every mounted window, keyed by the manager's id. The dock
+  /// (or anything else) asks here first when it minimizes an app, so the
+  /// squeeze into the dock plays through the widget that owns the window.
+  static final Map<int, _ShellWindowState> _states = {};
 
   @override
   void dispose() {
     _entrance.dispose();
+    _restore.dispose();
     _exit.dispose();
+    _genie.dispose();
     _rectMove.dispose();
+    // Leave the registry so a stale handle never points at a dead state.
+    if (_states[widget.window.id] == this) _states.remove(widget.window.id);
     super.dispose();
   }
 
@@ -125,21 +178,52 @@ class _ShellWindowState extends State<ShellWindow>
     setState(() {});
   }
 
+  /// Asks the live window state to play the genie first. The title-bar button
+  /// takes this path internally; the dock takes it through here. A window
+  /// without a mounted state (should not happen) minimizes immediately.
+  static void minimizeAnimated(WindowManager manager, int id) {
+    final state = _states[id];
+    if (state != null && state.mounted) {
+      state._requestExit(_ExitAction.minimize);
+    } else {
+      manager.minimize(id);
+    }
+  }
+
   void _requestExit(_ExitAction action) {
     if (_exitAction != _ExitAction.none) return;
     _exitAction = action;
+    if (action == _ExitAction.minimize) {
+      // The macOS genie: fold into the dock icon, then tell the manager the
+      // window is gone.
+      _minimizing = true;
+      _genie.forward().whenComplete(() {
+        if (!mounted) return;
+        widget.manager.minimize(widget.window.id);
+        widget.onChanged();
+      });
+      return;
+    }
     _exit.forward().whenComplete(() {
       if (!mounted) return;
       if (action == _ExitAction.close) {
         widget.manager.close(widget.window.id);
-      } else if (action == _ExitAction.minimize) {
-        widget.manager.minimize(widget.window.id);
       }
       widget.onChanged();
     });
   }
 
-  bool get _animating => _entrance.isAnimating || _exit.isAnimating;
+  /// The dock anchor point the genie folds into: roughly the centre of the
+  /// dock's icon column, in the shell's root coordinates.
+  Offset _dockPoint() {
+    final area = widget.manager.area;
+    // Dead centre of the right rail, where the running-app icons live. The
+    // old anchor was the dock's bottom corner, so windows folded into the
+    // launcher instead of their own icon.
+    return Offset(area.width - 46, area.height / 2);
+  }
+
+  double _clamp01(double v) => v.clamp(0.0, 1.0).toDouble();
 
   @override
   Widget build(BuildContext context) {
@@ -168,23 +252,79 @@ class _ShellWindowState extends State<ShellWindow>
           if (!widget.active) widget.onFocus();
         },
         child: AnimatedBuilder(
-          animation: Listenable.merge([_entrance, _exit]),
+          animation: Listenable.merge([_entrance, _restore, _exit, _genie]),
           builder: (context, child) {
-            final enter = Curves.easeOutCubic.transform(_entrance.value);
-            final spring = Curves.easeOutBack.transform(_entrance.value * 0.8);
-            final leave = Curves.easeInCubic.transform(_exit.value);
-            final offset = 74.0 * (1 - enter) + 58.0 * leave;
-            final scale = (0.94 + 0.06 * spring) * (1 - 0.05 * leave);
-            final opacity = (enter * (1 - leave)).clamp(0.0, 1.0);
+            // Four motions share one builder:
+            //  * minimize folds the window into its dock icon (macOS genie);
+            //  * restore unfolds it back out of that icon;
+            //  * close fades and lifts the window over 320 ms;
+            //  * a fresh open is a short scale/fade, not a genie.
+            Matrix4 matrix;
+            double opacity = 1;
+            final rect = _displayedRect;
+            if (_minimizing && _genie.value > 0) {
+              final p = Curves.easeInOutCubic.transform(_genie.value);
+              final anchor = _dockPoint();
+              final dx = (anchor.dx - rect.right) * p;
+              final dy = (anchor.dy - rect.bottom) * p;
+              final sx = 1.0 - 0.88 * p;
+              final sy = 1.0 - 0.42 * p;
+              opacity = 1.0 - _clamp01((p - 0.72) / 0.28);
+              matrix = Matrix4.identity()
+                ..translateByDouble(dx, dy, 0.0, 1.0)
+                ..translateByDouble(rect.width, rect.height, 0.0, 1.0)
+                ..scaleByDouble(sx, sy, 1.0, 1.0)
+                ..translateByDouble(-rect.width, -rect.height, 0.0, 1.0);
+            } else if (_restore.isAnimating) {
+              final p = Curves.easeOutCubic.transform(_restore.value);
+              final anchor = _dockPoint();
+              final dx = (anchor.dx - rect.right) * (1 - p);
+              final dy = (anchor.dy - rect.bottom) * (1 - p);
+              final sx = 0.12 + 0.88 * p;
+              final sy = 0.50 + 0.50 * p;
+              opacity = _clamp01(_restore.value * 4);
+              matrix = Matrix4.identity()
+                ..translateByDouble(dx, dy, 0.0, 1.0)
+                ..translateByDouble(rect.width, rect.height, 0.0, 1.0)
+                ..scaleByDouble(sx, sy, 1.0, 1.0)
+                ..translateByDouble(-rect.width, -rect.height, 0.0, 1.0);
+            } else if (_exit.isAnimating) {
+              final leave = Curves.easeInOutCubic.transform(_exit.value);
+              // Hold the window visible for the first fifth; the old curve
+              // was already mostly transparent halfway through the close,
+              // which is why it read as "it disappears too early".
+              final fade = _clamp01((leave - 0.22) / 0.78);
+              opacity = 1.0 - fade;
+              final scale = 1.0 - 0.045 * leave;
+              matrix = Matrix4.identity()
+                ..translateByDouble(0.0, -18.0 * leave, 0.0, 1.0)
+                ..translateByDouble(
+                    rect.width / 2, rect.height / 2, 0.0, 1.0)
+                ..scaleByDouble(scale, scale, 1.0, 1.0)
+                ..translateByDouble(
+                    -rect.width / 2, -rect.height / 2, 0.0, 1.0);
+            } else {
+              final enter = Curves.easeOutCubic.transform(_entrance.value);
+              final pop = Curves.easeOutBack
+                  .transform(_entrance.value)
+                  .clamp(0.0, 1.015);
+              final scale = 0.94 + 0.06 * pop;
+              opacity = _clamp01(enter);
+              matrix = Matrix4.identity()
+                ..translateByDouble(0.0, 12.0 * (1 - enter), 0.0, 1.0)
+                ..translateByDouble(
+                    rect.width / 2, rect.height / 2, 0.0, 1.0)
+                ..scaleByDouble(scale, scale, 1.0, 1.0)
+                ..translateByDouble(
+                    -rect.width / 2, -rect.height / 2, 0.0, 1.0);
+            }
             return Opacity(
+              key: const ValueKey('window-opacity'),
               opacity: opacity,
-              child: Transform.translate(
-                offset: Offset(offset, 0),
-                child: Transform.scale(
-                  scale: scale,
-                  alignment: Alignment.topRight,
-                  child: child,
-                ),
+              child: Transform(
+                key: const ValueKey('window-entrance'),
+                transform: matrix,
+                child: child,
               ),
             );
           },
@@ -202,6 +342,9 @@ class _ShellWindowState extends State<ShellWindow>
   Widget _chrome(BuildContext context) {
     final window = widget.window;
     final radius = window.maximized ? 10.0 : 16.0;
+    // The window no longer carries a flat dark fill: the wallpaper shows
+    // through a deep gaussian blur. Settings keeps the deepest blur.
+    final blur = window.app == ShellApp.settings ? 50.0 : 30.0;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
@@ -215,37 +358,36 @@ class _ShellWindowState extends State<ShellWindow>
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xF21C1C1F), Color(0xF0121214)],
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              color: Colors.black.withValues(alpha: 0.30),
             ),
-          ),
-          foregroundDecoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: widget.active ? 0.26 : 0.10),
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: widget.active ? 0.26 : 0.10),
+              ),
             ),
-          ),
-          child: Column(
-            children: [
-              _titleBar(context),
-              Expanded(
-                child: ClipRect(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: RepaintBoundary(child: widget.content),
-                      ),
-                      if (!window.maximized) _resizeHandle(),
-                    ],
+            child: Column(
+              children: [
+                _titleBar(context),
+                Expanded(
+                  child: ClipRect(
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: RepaintBoundary(child: widget.content),
+                        ),
+                        if (!window.maximized) _resizeHandle(),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -254,84 +396,88 @@ class _ShellWindowState extends State<ShellWindow>
 
   Widget _titleBar(BuildContext context) {
     final window = widget.window;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: (_) {
-        _rectMove.stop();
-        setState(() => _dragging = true);
-      },
-      onPanUpdate: (details) {
-        widget.manager.moveBy(
-          window.id,
-          details.delta.dx,
-          details.delta.dy,
-        );
-        // Local repaint: dragging one window must not rebuild the whole
-        // desktop and every other app inside it.
-        setState(() {});
-      },
-      onPanEnd: (_) => setState(() => _dragging = false),
-      onPanCancel: () => setState(() => _dragging = false),
-      onDoubleTap: _toggleMaximized,
-      child: MouseRegion(
-        cursor: _dragging ? SystemMouseCursors.grabbing : SystemMouseCursors.move,
-        child: Container(
-          height: 40,
-          padding: const EdgeInsets.only(left: 12, right: 6),
-          decoration: BoxDecoration(
-            color: widget.active
-                ? Colors.white.withValues(alpha: 0.04)
-                : Colors.transparent,
-            border: Border(
-              bottom: BorderSide(
-                color: Colors.white.withValues(alpha: 0.07),
-              ),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                iconForApp(window.app),
-                size: 16,
-                color: accentForApp(window.app),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  window.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: widget.active ? Colors.white : Colors.white60,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.1,
-                  ),
+    // The drag/double-tap detector covers the icon and the title only. When
+    // it wrapped the whole bar, its double-tap recogniser held the window
+    // buttons in the gesture arena for ~300 ms: close and minimize felt
+    // unresponsive and their animations looked late.
+    return MouseRegion(
+      cursor:
+          _dragging ? SystemMouseCursors.grabbing : SystemMouseCursors.move,
+      child: Container(
+        height: 40,
+        // Flush to the top corners: no padding above the buttons row and
+        // no hairline under it, the glass underneath just shows through.
+        padding: const EdgeInsets.only(left: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (_) {
+                  _rectMove.stop();
+                  setState(() => _dragging = true);
+                },
+                onPanUpdate: (details) {
+                  widget.manager.moveBy(
+                    window.id,
+                    details.delta.dx,
+                    details.delta.dy,
+                  );
+                  // Local repaint: dragging one window must not rebuild the
+                  // whole desktop and every other app inside it.
+                  setState(() {});
+                },
+                onPanEnd: (_) => setState(() => _dragging = false),
+                onPanCancel: () => setState(() => _dragging = false),
+                onDoubleTap: _toggleMaximized,
+                child: Row(
+                  children: [
+                    Icon(
+                      iconForApp(window.app),
+                      size: 16,
+                      color: accentForApp(window.app),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        window.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color:
+                              widget.active ? Colors.white : Colors.white60,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.1,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              _windowButton(
-                key: const ValueKey('window-minimize'),
-                icon: Icons.remove_rounded,
-                tooltip: 'Minimize',
-                onTap: () => _requestExit(_ExitAction.minimize),
-              ),
-              _windowButton(
-                key: const ValueKey('window-maximize'),
-                icon: window.maximized
-                    ? Icons.filter_none_rounded
-                    : Icons.crop_square_rounded,
-                tooltip: window.maximized ? 'Restore' : 'Maximize',
-                onTap: _toggleMaximized,
-              ),
-              _windowButton(
-                key: const ValueKey('window-close'),
-                icon: Icons.close_rounded,
-                tooltip: 'Close',
-                danger: true,
-                onTap: () => _requestExit(_ExitAction.close),
-              ),
-            ],
-          ),
+            ),
+            _windowButton(
+              key: const ValueKey('window-minimize'),
+              icon: Icons.remove_rounded,
+              tooltip: 'Minimize',
+              onTap: () => _requestExit(_ExitAction.minimize),
+            ),
+            _windowButton(
+              key: const ValueKey('window-maximize'),
+              icon: window.maximized
+                  ? Icons.filter_none_rounded
+                  : Icons.crop_square_rounded,
+              tooltip: window.maximized ? 'Restore' : 'Maximize',
+              onTap: _toggleMaximized,
+            ),
+            _windowButton(
+              key: const ValueKey('window-close'),
+              icon: Icons.close_rounded,
+              tooltip: 'Close',
+              danger: true,
+              onTap: () => _requestExit(_ExitAction.close),
+            ),
+          ],
         ),
       ),
     );

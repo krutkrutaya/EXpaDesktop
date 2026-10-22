@@ -7,7 +7,7 @@
 // the default browser); that is why this file imports no launcher anymore.
 
 import 'dart:async';
-import 'dart:convert' show jsonDecode;
+import 'dart:convert';
 import 'dart:ffi' hide Size;
 import 'dart:io';
 import 'dart:isolate';
@@ -22,11 +22,13 @@ import 'package:flutter/services.dart';
 import 'apps/audio_pick.dart';
 import 'apps/music_library.dart';
 import 'apps/music_scanner.dart';
+import 'audio_sessions.dart';
 import 'command_router.dart';
 import 'desktop/app_catalog.dart';
 import 'desktop/app_icons.dart';
 import 'desktop/apps/browser_app.dart';
 import 'desktop/apps/calculator_app.dart';
+import 'desktop/apps/configs_app.dart';
 import 'desktop/apps/files_app.dart';
 import 'desktop/apps/musics_app.dart';
 import 'desktop/apps/notepad_app.dart';
@@ -36,11 +38,17 @@ import 'desktop/apps/snip_app.dart';
 import 'desktop/apps/tasks_app.dart';
 import 'desktop/apps/terminal_app.dart';
 import 'desktop/desktop_surface.dart';
+import 'desktop/shell_window.dart';
 import 'desktop/window_manager.dart' hide Rect4;
+import 'i18n.dart';
+import 'native/sysctl.dart';
 import 'id3_art.dart';
 import 'liquid_glass/morph_controller.dart';
 import 'liquid_glass/morph_glass.dart';
 import 'liquid_glass/wave_slider.dart';
+import 'shell_prefs.dart';
+import 'wifi_control.dart';
+import 'windows_apps.dart';
 import 'playback/player_controller.dart';
 import 'playback/track.dart';
 import 'player.dart';
@@ -50,6 +58,7 @@ import 'shell_panels.dart';
 import 'sound_control.dart';
 import 'system_actions.dart';
 import 'system_actions.dart' as sys;
+import 'ui/glass.dart';
 import 'ui/mini_player.dart';
 import 'workspaces.dart';
 
@@ -67,6 +76,7 @@ typedef SetBrightnessBoostNative = Int32 Function(Double level);
 typedef SetBrightnessBoostDart = int Function(double level);
 
 void main() {
+  Loc.load();
   runApp(const MyApp());
 }
 
@@ -83,13 +93,23 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, this.radio, this.sound, this.audio});
+  const MyHomePage({
+    super.key,
+    this.radio,
+    this.sound,
+    this.audio,
+    this.wifiNetworks,
+  });
 
   /// Test seams: the widget tests pass recorders so no test spawns
   /// PowerShell, moves the machine's volume or plays a sound.
   final RadioSource? radio;
   final SoundSource? sound;
   final AudioEngine? audio;
+
+  /// Test seam: a fixed network list so the flyout can be driven without
+  /// WLAN hardware or a running wlansvc.
+  final List<WifiNetwork>? wifiNetworks;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -182,24 +202,99 @@ class _MyHomePageState extends State<MyHomePage>
   double _warmth = 0.0;
 
   // Liquid-glass panel morphs; created in didChangeDependencies, where the
-  // window size (and so the button/menu rects) is known.
-  MorphPanelController? _menuMorph;
+  // window size (and so the button/menu rects) is known. The power menu
+  // replaced the old 700x550 panel: it is a small dropdown over the
+  // launcher's power button now.
+  MorphPanelController? _powerMorph;
   MorphPanelController? _brightnessMorph;
   MorphPanelController? _playerMorph;
   MorphPanelController? _volumeMorph;
+  MorphPanelController? _wifiMorph;
   MorphPanelController? _launcherMorph;
   MorphPanelController? _desktopsMorph;
+  MorphPanelController? _appsMorph;
 
-  bool get _isMenuOpen => _menuMorph?.active ?? false;
+  bool get _isPowerOpen => _powerMorph?.active ?? false;
   bool get _isBrightnessOpen => _brightnessMorph?.active ?? false;
   bool get _isPlayerOpen => _playerMorph?.active ?? false;
   bool get _isVolumeOpen => _volumeMorph?.active ?? false;
+  bool get _isWifiOpen => _wifiMorph?.active ?? false;
   bool get _isLauncherOpen => _launcherMorph?.active ?? false;
   bool get _isDesktopsOpen => _desktopsMorph?.active ?? false;
+  bool get _isAppsOpen => _appsMorph?.active ?? false;
+
+  // ---- the real Windows Start-menu (the programs panel) ----------------------
+  // Scanned once in the background at startup; the panel only filters by
+  // search text afterwards.
+  List<WindowsAppEntry> _windowsApps = const [];
+  final TextEditingController _appsSearch = TextEditingController();
+  final FocusNode _appsFocus = FocusNode();
 
   // System volume mirrored from the audio endpoint.
   double _volume = 0.7;
   bool _muted = false;
+
+  // ---- per-app volume (the mixer's rows under the master slider) ------------
+  // Scanned when the sound flyout opens and re-polled every few seconds while
+  // it stays open: sessions appear and vanish with the apps themselves.
+  List<AudioAppSession> _audioSessions = const [];
+  Timer? _sessionsTimer;
+  Timer? _wifiPoll;
+
+  // ---- the wi-fi flyout ------------------------------------------------------
+  // Scanned once when the flyout lands (netsh takes a moment) and re-scanned
+  // on demand; the expanded network card holds the password field.
+  List<WifiNetwork> _wifiNetworks = const [];
+  bool _wifiScanning = false;
+  bool _wifiSearchOpen = false;
+  String _wifiQuery = '';
+  String? _wifiExpanded;
+  final TextEditingController _wifiSearch = TextEditingController();
+  final FocusNode _wifiSearchFocus = FocusNode();
+  final TextEditingController _wifiPassword = TextEditingController();
+  bool _wifiAutoJoin = true;
+  bool _wifiBusy = false;
+
+  // ---- clock / region / display (the settings' new panes) --------------------
+  /// The desktop clock adds these minutes to the system time: the chosen
+  /// Windows time zone's offset versus this machine's own, re-synced every
+  /// 10 min so daylight changes are small and slow.
+  int _tzDeltaMin = 0;
+
+  /// The chosen Windows zone id; '' means "use this machine's zone".
+  String _tzZone = '';
+
+  /// "Pick the zone automatically" — off by default, as requested.
+  bool _tzAuto = false;
+
+  /// The region the Date & time pane shows; formats and locale in one knob.
+  String _region = 'ru-RU';
+  Timer? _tzTimer;
+
+  /// The Display pane's dropdowns: mock values, persisted like everything
+  /// else. 'auto' stands for the recommended auto-detect anywhere sensible.
+  String _displayRes = 'auto';
+  String _displayOrient = 'auto';
+  String _displayHz = 'auto';
+
+  /// The Configs switch: when false the wallpaper timer only ticks.
+  bool _slideshowOn = true;
+
+  /// The wallpaper timer's period in seconds (was hard-wired to 12).
+  int _slideshowPeriod = 12;
+
+  /// Keys the vibe-bar pane is allowed to put on the waybar's right side.
+  static const List<String> _waybarItemKeys = [
+    'bluetooth',
+    'sound',
+    'wifi',
+    'brightness',
+    'clipboard',
+    'emoji',
+    'updates',
+    'calendar',
+    'notifications',
+  ];
 
   // Hand-written metadata for files we know; every other .mp3 found in
   // assets/music is named from its filename automatically.
@@ -266,6 +361,7 @@ class _MyHomePageState extends State<MyHomePage>
   void initState() {
     super.initState();
     _workspaces = WorkspaceController(backgroundCount: _backgrounds.length);
+    _wifiNetworks = widget.wifiNetworks ?? const [];
     _player = PlayerController(engine: widget.audio, vsync: this);
     _player.setTracks(_seedTracks, const {});
     _loadBrightnessLib();
@@ -274,13 +370,227 @@ class _MyHomePageState extends State<MyHomePage>
     _radioTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       unawaited(_refreshRadios());
     });
-    _backgroundTimer = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (!mounted) return;
-      _workspaces.cycleBackground();
-      _wallpaperTick.value++;
-    });
+    // Everything the settings panes remember (slideshow period, time zone,
+    // region, display choices, the vibe bar's waybar buttons) comes from
+    // prefs.cfg before the first frame, so the shell opens exactly as closed.
+    _slideshowOn = ShellPrefs.getBool('slideshow', true);
+    _slideshowPeriod = ShellPrefs.getInt('slideshow_period', 12);
+    _tzZone = ShellPrefs.get('tz');
+    _tzAuto = ShellPrefs.getBool('tz_auto', false);
+    _region = ShellPrefs.get('region', 'ru-RU');
+    _displayRes = ShellPrefs.get('display_res', 'auto');
+    _displayOrient = ShellPrefs.get('display_orient', 'auto');
+    _displayHz = ShellPrefs.get('display_hz', 'auto');
+    final savedItems = ShellPrefs.get('waybar_items');
+    if (savedItems.isNotEmpty) {
+      var items = _sanitizeWaybarItems(savedItems);
+      // Old prefs predate brightness being a removable panel. Add it once;
+      // after the version key exists the user's removal is respected.
+      if (ShellPrefs.get('waybar_version').isEmpty) {
+        if (!items.contains('brightness')) items = [...items, 'brightness'];
+        ShellPrefs.set('waybar_version', '2');
+      }
+      ShellLayout.waybarRightItems = items;
+    }
+    _backgroundTimer = Timer.periodic(
+      Duration(seconds: _slideshowPeriod.clamp(5, 1 << 16)),
+      (_) {
+        // The settings switch freezes the slideshow without killing the timer.
+        if (!mounted || !_slideshowOn) return;
+        _workspaces.cycleBackground();
+        _wallpaperTick.value++;
+      },
+    );
+    if (_tzZone.isNotEmpty && !_tzAuto) {
+      _tzTimer = Timer.periodic(
+          const Duration(minutes: 10), (_) => unawaited(_syncClockDelta()));
+      unawaited(_syncClockDelta());
+    }
     unawaited(_scanMusicAssets());
     unawaited(_loadFileLibrary());
+    // The Start-menu is read in the background: the power shell call takes a
+    // second or two and must never block the shell's first frame.
+    unawaited(_scanWindowsApps());
+    // Rebuild the whole shell when the language flips in settings/configs.
+    Loc.notifier.addListener(_onLanguageChanged);
+  }
+
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
+  // ---- settings-owned shell state (prefs.cfg) -------------------------------
+  //
+  // Everything below is written by the settings window and applied right
+  // here: the shell is the runtime, the panes are its knobs.
+
+  /// Keeps only real waybar keys, drops duplicates, and always leaves the
+  /// three radio buttons present at the head (the flyouts must exist even if
+  /// the vibe pane is mid-drag).
+  List<String> _sanitizeWaybarItems(String csv) {
+    final out = <String>[];
+    for (final raw in csv.split(',')) {
+      final key = raw.trim();
+      if (!_waybarItemKeys.contains(key)) continue;
+      if (out.contains(key)) continue;
+      out.add(key);
+    }
+    return out;
+  }
+
+  /// The vibe-bar pane changed the waybar's right side (a trash click or an
+  /// add): persist it, retarget the panels whose anchors moved, and close a
+  /// flyout whose button has just been trashed.
+  void _setWaybarItems(List<String> items) {
+    ShellLayout.waybarRightItems = items;
+    ShellPrefs.set('waybar_items', items.join(','));
+    ShellPrefs.set('waybar_version', '2');
+    if (!items.contains('sound') && _isVolumeOpen) _volumeMorph?.close();
+    if (!items.contains('wifi') && _isWifiOpen) _wifiMorph?.close();
+    if (!items.contains('brightness') && _isBrightnessOpen) {
+      _brightnessMorph?.close();
+    }
+    // didChangeDependencies only fires on MediaQuery changes, so re-anchor
+    // the morphs here for the new (possibly wider) waybar.
+    final l = ShellLayout(_viewport.width, _viewport.height);
+    _powerMorph?.retarget(l.powerButton, l.powerRect, 15.0);
+    _brightnessMorph?.retarget(l.brightnessButton, l.brightnessRect, 25.0);
+    _playerMorph?.retarget(l.playerButton, l.playerRect, 25.0);
+    _volumeMorph?.retarget(l.volumeButton, l.volumeRect, 20.0);
+    _wifiMorph?.retarget(l.wifiButton, l.wifiRect, 20.0);
+    _launcherMorph?.retarget(l.launcherButton, l.launcherRect, 20.0);
+    _desktopsMorph?.retarget(l.desktopsButton, l.desktopsRect, 20.0);
+    _appsMorph?.retarget(l.appsButton, l.appsRect, 20.0);
+    setState(() {});
+  }
+
+  /// The wallpaper slideshow switch + period, now living in the settings
+  /// ('wallpaper & theme' tile) instead of the Configs app.
+  void _setSlideshow(bool on, int period) {
+    _slideshowOn = on;
+    _slideshowPeriod = period.clamp(5, 3600);
+    ShellPrefs.set('slideshow', _slideshowOn ? '1' : '0');
+    ShellPrefs.set('slideshow_period', '$_slideshowPeriod');
+    _backgroundTimer?.cancel();
+    _backgroundTimer = Timer.periodic(
+      Duration(seconds: _slideshowPeriod),
+      (_) {
+        if (!mounted || !_slideshowOn) return;
+        _workspaces.cycleBackground();
+        _wallpaperTick.value++;
+      },
+    );
+    setState(() {});
+  }
+
+  /// Computes the chosen Windows time zone's current offset versus this
+  /// machine's clock, in whole minutes. Uses one short powershell round-trip
+  /// per sync (open + every 10 min), so DST changes stay small drifts.
+  Future<void> _syncClockDelta() async {
+    if (_tzZone.isEmpty || _tzAuto) return;
+    final zoneOffset = SysCtl.timezoneOffset(_tzZone);
+    if (!mounted || zoneOffset == null) return;
+    // The clock ticks on local wall time; add the difference between the
+    // chosen zone and this machine. DST is already inside zoneOffset.
+    final localOffset = DateTime.now().timeZoneOffset.inMinutes;
+    setState(() {
+      _tzDeltaMin = zoneOffset - localOffset;
+    });
+  }
+
+  /// The Date & time pane picked a zone (or ticked the auto switch).
+  void _setTimezone(String zone, {required bool auto}) {
+    _tzZone = zone;
+    _tzAuto = auto;
+    ShellPrefs.set('tz', zone);
+    ShellPrefs.set('tz_auto', auto ? '1' : '0');
+    _tzTimer?.cancel();
+    if (auto || zone.isEmpty) {
+      // Automatic = trust the machine: the delta resets and the clock shows
+      // its own time again.
+      if (mounted) setState(() => _tzDeltaMin = 0);
+      return;
+    }
+    _tzTimer = Timer.periodic(
+        const Duration(minutes: 10), (_) => unawaited(_syncClockDelta()));
+    unawaited(_syncClockDelta());
+  }
+
+  void _setRegion(String region) {
+    _region = region;
+    ShellPrefs.set('region', region);
+    setState(() {});
+  }
+
+  void _setDisplayRes(String value) {
+    if (value != 'auto') {
+      final parts = value.split('x');
+      final width = int.tryParse(parts.first);
+      final height = parts.length > 1 ? int.tryParse(parts[1]) : null;
+      if (width == null || height == null) return;
+      final current = SysCtl.displayState().current;
+      final ok = SysCtl.applyDisplay(
+        width: width,
+        height: height,
+        hz: current?.hz ?? 0,
+        orientation: current?.orientation ?? -1,
+      );
+      if (!ok) return;
+    }
+    _displayRes = value;
+    ShellPrefs.set('display_res', value);
+    setState(() {});
+  }
+
+  void _setDisplayOrient(String value) {
+    if (value != 'auto') {
+      final orientation = int.tryParse(value);
+      if (orientation == null) return;
+      final current = SysCtl.displayState().current;
+      if (current == null) return;
+      final ok = SysCtl.applyDisplay(
+        width: current.width,
+        height: current.height,
+        hz: current.hz,
+        orientation: orientation,
+      );
+      if (!ok) return;
+    }
+    _displayOrient = value;
+    ShellPrefs.set('display_orient', value);
+    setState(() {});
+  }
+
+  void _setDisplayHz(String value) {
+    if (value != 'auto') {
+      final hz = int.tryParse(value);
+      if (hz == null) return;
+      final current = SysCtl.displayState().current;
+      final ok = SysCtl.applyDisplay(
+        width: current?.width ?? 0,
+        height: current?.height ?? 0,
+        hz: hz,
+        orientation: current?.orientation ?? -1,
+      );
+      if (!ok) return;
+    }
+    _displayHz = value;
+    ShellPrefs.set('display_hz', value);
+    setState(() {});
+  }
+
+  /// Opens a real Windows settings page (the updates pane's link).
+  static Future<void> _openWindowsUri(String uri) async {
+    try {
+      await Process.start('explorer.exe', [uri]);
+    } catch (_) {}
+  }
+
+  /// One background read of the machine's Start-menu for the programs panel.
+  Future<void> _scanWindowsApps() async {
+    final apps = await WindowsApps.scan();
+    if (!mounted || apps.isEmpty) return;
+    setState(() => _windowsApps = apps);
   }
 
   @override
@@ -295,10 +605,10 @@ class _MyHomePageState extends State<MyHomePage>
     // live in [ShellLayout] so the mock suite can check every one of them
     // against the dock and the screen edges on any window size.
     final l = ShellLayout(_viewport.width, _viewport.height);
-    if (_menuMorph == null) {
-      _menuMorph = MorphPanelController(
-        buttonRect: l.menuButton,
-        menuRect: l.menuRect,
+    if (_powerMorph == null) {
+      _powerMorph = MorphPanelController(
+        buttonRect: l.powerButton,
+        menuRect: l.powerRect,
         menuRadius: 15.0,
       )..attach(this);
       _brightnessMorph = MorphPanelController(
@@ -316,33 +626,51 @@ class _MyHomePageState extends State<MyHomePage>
         menuRect: l.volumeRect,
         menuRadius: 20.0,
       )..attach(this);
+      _wifiMorph = MorphPanelController(
+        buttonRect: l.wifiButton,
+        menuRect: l.wifiRect,
+        menuRadius: 20.0,
+      )..attach(this);
       _launcherMorph = MorphPanelController(
         buttonRect: l.launcherButton,
         menuRect: l.launcherRect,
         menuRadius: 20.0,
+        // The 9-dots menu opens at its place right away: no drop that starts
+        // a bit too high and settles a second later, and the tiles are
+        // hoverable from the first frame.
+        instantOpen: true,
       )..attach(this);
       _desktopsMorph = MorphPanelController(
         buttonRect: l.desktopsButton,
         menuRect: l.desktopsRect,
         menuRadius: 20.0,
       )..attach(this);
+      _appsMorph = MorphPanelController(
+        buttonRect: l.appsButton,
+        menuRect: l.appsRect,
+        menuRadius: 20.0,
+      )..attach(this);
       for (final morph in [
-        _menuMorph,
+        _powerMorph,
         _brightnessMorph,
         _playerMorph,
         _volumeMorph,
+        _wifiMorph,
         _launcherMorph,
         _desktopsMorph,
+        _appsMorph,
       ]) {
         _watchMorph(morph!);
       }
     } else {
-      _menuMorph!.retarget(l.menuButton, l.menuRect, 15.0);
+      _powerMorph!.retarget(l.powerButton, l.powerRect, 15.0);
       _brightnessMorph!.retarget(l.brightnessButton, l.brightnessRect, 25.0);
       _playerMorph!.retarget(l.playerButton, l.playerRect, 25.0);
       _volumeMorph!.retarget(l.volumeButton, l.volumeRect, 20.0);
+      _wifiMorph!.retarget(l.wifiButton, l.wifiRect, 20.0);
       _launcherMorph!.retarget(l.launcherButton, l.launcherRect, 20.0);
       _desktopsMorph!.retarget(l.desktopsButton, l.desktopsRect, 20.0);
+      _appsMorph!.retarget(l.appsButton, l.appsRect, 20.0);
     }
   }
 
@@ -362,12 +690,23 @@ class _MyHomePageState extends State<MyHomePage>
     _commandController.dispose();
     _commandFocus.dispose();
     _player.dispose();
-    _menuMorph?.dispose();
+    Loc.notifier.removeListener(_onLanguageChanged);
+    _powerMorph?.dispose();
     _brightnessMorph?.dispose();
     _playerMorph?.dispose();
     _volumeMorph?.dispose();
+    _wifiMorph?.dispose();
     _launcherMorph?.dispose();
     _desktopsMorph?.dispose();
+    _appsMorph?.dispose();
+    _appsSearch.dispose();
+    _appsFocus.dispose();
+    _wifiSearch.dispose();
+    _wifiSearchFocus.dispose();
+    _wifiPassword.dispose();
+    _sessionsTimer?.cancel();
+    _wifiPoll?.cancel();
+    _tzTimer?.cancel();
     _brightnessLib = null;
     super.dispose();
   }
@@ -519,6 +858,22 @@ class _MyHomePageState extends State<MyHomePage>
       final animating = morph.animating;
       if (_morphAnimating[morph] == animating) return;
       _morphAnimating[morph] = animating;
+      // A flyout can close by its own button *or* by the tap-away layer.
+      // Both paths end here, so the pollers stop even when the panel was not
+      // closed through _toggleWifiPanel/_toggleVolume.
+      if (!animating && !morph.active) {
+        if (identical(morph, _wifiMorph)) {
+          _wifiPoll?.cancel();
+          _wifiPoll = null;
+          _wifiSearchOpen = false;
+          _wifiQuery = '';
+          _wifiSearch.clear();
+        }
+        if (identical(morph, _volumeMorph)) {
+          _sessionsTimer?.cancel();
+          _sessionsTimer = null;
+        }
+      }
       if (mounted) setState(() {});
     });
   }
@@ -628,14 +983,18 @@ class _MyHomePageState extends State<MyHomePage>
     final plan = PanelPolicy.plan(opening);
     for (final panel in plan.toClose) {
       switch (panel) {
-        case ShellPanel.menu:
-          if (_isMenuOpen) _menuMorph?.close();
+        case ShellPanel.power:
+          if (_isPowerOpen) _powerMorph?.close();
         case ShellPanel.launcher:
           if (_isLauncherOpen) _launcherMorph?.close();
+        case ShellPanel.apps:
+          if (_isAppsOpen) _appsMorph?.close();
         case ShellPanel.brightness:
           if (_isBrightnessOpen) _brightnessMorph?.close();
         case ShellPanel.volume:
           if (_isVolumeOpen) _volumeMorph?.close();
+        case ShellPanel.wifi:
+          if (_isWifiOpen) _wifiMorph?.close();
         case ShellPanel.player:
           if (_isPlayerOpen) _playerMorph?.close();
         case ShellPanel.desktops:
@@ -651,28 +1010,34 @@ class _MyHomePageState extends State<MyHomePage>
   /// the screen for the whole morph while the window animates behind it.
   void _closePanels({bool fast = false}) {
     final speed = fast ? 2.6 : 1.0;
-    if (_isMenuOpen) _menuMorph?.close(speed: speed);
+    if (_isPowerOpen) _powerMorph?.close(speed: speed);
     if (_isLauncherOpen) _launcherMorph?.close(speed: speed);
+    if (_isAppsOpen) _appsMorph?.close(speed: speed);
     if (_isBrightnessOpen) _brightnessMorph?.close(speed: speed);
     if (_isVolumeOpen) _volumeMorph?.close(speed: speed);
+    if (_isWifiOpen) _wifiMorph?.close(speed: speed);
     if (_isPlayerOpen) _playerMorph?.close(speed: speed);
     if (_isDesktopsOpen) _desktopsMorph?.close(speed: speed);
   }
 
   bool get _isAnyPanelOpen =>
-      _isMenuOpen ||
+      _isPowerOpen ||
       _isLauncherOpen ||
+      _isAppsOpen ||
       _isBrightnessOpen ||
       _isVolumeOpen ||
+      _isWifiOpen ||
       _isPlayerOpen ||
       _isDesktopsOpen;
 
   void _dismissFloatingSurfaces() {
     if (!_isVolumeOpen &&
+        !_isWifiOpen &&
         !_isBrightnessOpen &&
         !_isPlayerOpen &&
-        !_isMenuOpen &&
+        !_isPowerOpen &&
         !_isLauncherOpen &&
+        !_isAppsOpen &&
         !_isDesktopsOpen) {
       return;
     }
@@ -680,11 +1045,32 @@ class _MyHomePageState extends State<MyHomePage>
     setState(() {});
   }
 
-  void _toggleMenu() {
-    final m = _menuMorph;
+  /// The power dropdown toggles over the launcher's power button. It closes
+  /// nothing: the launcher stays open underneath it.
+  void _togglePowerMenu() {
+    final m = _powerMorph;
     if (m == null) return;
-    _applyPanelPlan(ShellPanel.menu);
+    _applyPanelPlan(ShellPanel.power);
     m.toggle();
+    setState(() {});
+  }
+
+  /// The real-programs panel toggles from the waybar's 4-squares button;
+  /// it is a centred panel, so the launcher and every flyout close first.
+  void _toggleAppsMenu() {
+    final m = _appsMorph;
+    if (m == null) return;
+    _applyPanelPlan(ShellPanel.apps);
+    m.toggle();
+    // The search field grabs the keyboard the moment the panel lands, so
+    // "type to find" works without a second click.
+    if (m.active) {
+      // The search field grabs the keyboard the moment the panel lands, so
+      // "type to find" works without a second click.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _appsFocus.requestFocus();
+      });
+    }
     setState(() {});
   }
 
@@ -705,7 +1091,9 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   /// The sound flyout. It only ever opens the panel: sound is sound, the
-  /// desktop stays exactly where it is.
+  /// desktop stays exactly where it is. On open it also pulls the live
+  /// per-app session list and, while the panel stays up, re-polls it —
+  /// games and tabs come and go faster than a settings page would think.
   void _toggleVolume() {
     final m = _volumeMorph;
     if (m == null) return;
@@ -717,9 +1105,127 @@ class _MyHomePageState extends State<MyHomePage>
         _volume = sound.volume;
         _muted = sound.muted;
       });
+      unawaited(_refreshAudioSessions());
+      _sessionsTimer?.cancel();
+      _sessionsTimer = Timer.periodic(
+          const Duration(seconds: 3), (_) => unawaited(_refreshAudioSessions()));
+    } else {
+      _sessionsTimer?.cancel();
     }
     m.toggle();
     setState(() {});
+  }
+
+  /// One scan of the mixer's sessions (fail-soft: an empty list keeps the
+  /// master row alone).
+  Future<void> _refreshAudioSessions() async {
+    try {
+      final sessions = await AudioSessions.instance.sessions();
+      if (!mounted) return;
+      setState(() => _audioSessions = sessions);
+    } catch (_) {}
+  }
+
+  /// Writes one app's volume (the slider under a mixer row).
+  void _setAudioSessionVolume(int pid, double value) {
+    // Optimistic: the row moves at once; the COM write follows synchronously.
+    final list = [
+      for (final s in _audioSessions)
+        if (s.pid == pid) s..volume = value else s,
+    ];
+    setState(() => _audioSessions = list);
+    AudioSessions.instance.setVolume(pid, value);
+  }
+
+  /// Mutes one app's row.
+  void _setAudioSessionMute(int pid, bool muted) {
+    final list = [
+      for (final s in _audioSessions)
+        if (s.pid == pid) s..muted = muted else s,
+    ];
+    setState(() => _audioSessions = list);
+    AudioSessions.instance.setMute(pid, muted);
+  }
+
+  // ---- the wi-fi flyout ------------------------------------------------------
+
+  /// The wifi list drops out of its own waybar button — the settings window
+  /// stays where it is, like every other flyout.
+  void _toggleWifiPanel() {
+    final m = _wifiMorph;
+    if (m == null) return;
+    _applyPanelPlan(ShellPanel.wifi);
+    if (!m.active) {
+      _wifiQuery = '';
+      _wifiSearch.clear();
+      _wifiExpanded = null;
+      if (widget.wifiNetworks != null) {
+        _wifiNetworks = widget.wifiNetworks!;
+      } else {
+        unawaited(_wifiScan());
+        _wifiPoll?.cancel();
+        _wifiPoll = Timer.periodic(
+            const Duration(seconds: 10), (_) => unawaited(_wifiScan()));
+      }
+    } else {
+      _wifiPoll?.cancel();
+    }
+    m.toggle();
+    setState(() {});
+  }
+
+  /// One netsh pass; the pin (connected state) rides in the network list.
+  Future<void> _wifiScan() async {
+    if (_wifiScanning) return;
+    _wifiScanning = true;
+    if (mounted) setState(() {});
+    try {
+      final nets = await WifiControl.networks();
+      if (!mounted) return;
+      setState(() {
+        _wifiNetworks = nets;
+        _wifiScanning = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _wifiScanning = false);
+      }
+    }
+  }
+
+  /// "Подключиться": known networks join straight away; password networks go
+  /// through the profile writer first. Failures surface in the row itself.
+  Future<bool> _wifiConnect(WifiNetwork net, String password) async {
+    if (_wifiBusy) return false;
+    _wifiBusy = true;
+    if (mounted) setState(() {});
+    try {
+      final ok = await WifiControl.connect(
+        net,
+        password: password,
+        autoConnect: _wifiAutoJoin,
+      );
+      if (mounted) {
+        setState(() => _wifiBusy = false);
+      }
+      if (ok) unawaited(_wifiScan());
+      return ok;
+    } catch (_) {
+      if (mounted) setState(() => _wifiBusy = false);
+      return false;
+    }
+  }
+
+  /// "Отключить" on a pinned network.
+  Future<void> _wifiDisconnect(WifiNetwork net) async {
+    if (_wifiBusy) return;
+    _wifiBusy = true;
+    if (mounted) setState(() {});
+    try {
+      await WifiControl.disconnect();
+    } catch (_) {}
+    if (mounted) setState(() => _wifiBusy = false);
+    unawaited(_wifiScan());
   }
 
   void _toggleDesktops() {
@@ -761,17 +1267,17 @@ class _MyHomePageState extends State<MyHomePage>
       setState(() {});
     }
 
-    if (panelWasOpen) {
-      Future<void>.delayed(const Duration(milliseconds: 150), open);
-    } else {
-      open();
-    }
+    open();
   }
 
   /// The dock's running-window buttons: focus, or minimize if already focused.
   void _toggleAppWindow(AppWindow window) {
     if (_windows.activeId == window.id && !window.minimized) {
-      _windows.minimize(window.id);
+      // Fold through the genie: the dock button asks the live window widget
+      // to play the macOS-style squeeze before the manager hides it.
+      // The restore path is the mirror: a minimized window re-mounts its
+      // ShellWindow on focus, and the entrance plays the genie backwards.
+      ShellWindow.minimizeAnimated(_windows, window.id);
     } else {
       _windows.focus(window.id);
     }
@@ -896,7 +1402,33 @@ class _MyHomePageState extends State<MyHomePage>
             onContrast: _setContrastFromUi,
             onWarmth: _setWarmthFromUi,
           ),
+          // The wallpaper timer's new home inside the wallpaper pane.
+          slideshowOn: _slideshowOn,
+          slideshowPeriod: _slideshowPeriod,
+          onSlideshow: _setSlideshow,
+          // The vibe bar's waybar buttons (add + trash, autosaved).
+          waybarItems: ShellLayout.waybarRightItems,
+          onWaybarItems: _setWaybarItems,
+          // Date & time: the desktop clock's zone and the region.
+          tzZone: _tzZone,
+          tzAuto: _tzAuto,
+          region: _region,
+          onTimezone: _setTimezone,
+          onRegion: _setRegion,
+          // Display: persisted dropdown choices.
+          displayRes: _displayRes,
+          displayOrient: _displayOrient,
+          displayHz: _displayHz,
+          onDisplayRes: _setDisplayRes,
+          onDisplayOrient: _setDisplayOrient,
+          onDisplayHz: _setDisplayHz,
+          // Updates: real links are handled by the shell.
+          onOpenUpdates: _openWindowsUri,
         );
+      case ShellApp.configs:
+        // The configs app is an empty shelf for now; its former switches
+        // (language, slideshow) moved into the Settings window.
+        return const ConfigsApp();
       case ShellApp.terminal:
         return const TerminalApp();
     }
@@ -1282,10 +1814,10 @@ class _MyHomePageState extends State<MyHomePage>
                 onTap: _dismissFloatingSurfaces,
               ),
             ),
-            const Positioned(
+            Positioned(
               top: 20.0,
               left: 30.0,
-              child: _Clock(),
+              child: _Clock(deltaMinutes: _tzAuto ? 0 : _tzDeltaMin),
             ),
             // The windows: above the wallpaper, below the waybar and panels.
             Positioned.fill(
@@ -1303,11 +1835,14 @@ class _MyHomePageState extends State<MyHomePage>
               child: ListenableBuilder(
                 listenable: Listenable.merge(_morphAnimating.keys.toList()),
                 builder: (context, _) {
-                  final open = _isMenuOpen ||
+                  // The dismiss layer only sits over the screen when a panel
+                  // is open; a click anywhere then closes them all.
+                  final open = _isPowerOpen ||
                       _isBrightnessOpen ||
                       _isPlayerOpen ||
                       _isVolumeOpen ||
-                      _isLauncherOpen;
+                      _isLauncherOpen ||
+                      _isAppsOpen;
                   return IgnorePointer(
                     ignoring: !open,
                     child: GestureDetector(
@@ -1329,13 +1864,16 @@ class _MyHomePageState extends State<MyHomePage>
                   key: const ValueKey('waybar'),
                   player: _player,
                   onPlayer: _togglePlayer,
+                  onApps: _toggleAppsMenu,
                   onBrightness: _toggleBrightness,
                   wifiOn: _wifiStatus.isOn,
                   bluetoothOn: _bluetoothStatus.isOn,
                   muted: _muted,
-                  onWifi: () => _openSettingsAt('wifi'),
+                  // The wifi button opens its own flyout now, like sound does.
+                  onWifi: _toggleWifiPanel,
                   onBluetooth: () => _openSettingsAt('bluetooth'),
                   onVolume: _toggleVolume,
+                  rightItems: ShellLayout.waybarRightItems,
                 ),
               ),
             ),
@@ -1350,7 +1888,7 @@ class _MyHomePageState extends State<MyHomePage>
                   frame: f,
                   restWidth: 350,
                   restHeight: 180,
-                  interactive: !morph.animating,
+                  interactive: true,
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
@@ -1400,6 +1938,10 @@ class _MyHomePageState extends State<MyHomePage>
               },
             ),
             // ---- volume flyout ---------------------------------------------
+            // Windows-11-style mixer: a master row first (small mute icon on
+            // the left, the slider, the loudness icon on the right), a short
+            // divider, then every running app that owns an audio session —
+            // each with its own slider and mute toggle.
             ListenableBuilder(
               listenable: _volumeMorph ?? const AlwaysStoppedAnimation<int>(0),
               builder: (context, _) {
@@ -1408,59 +1950,309 @@ class _MyHomePageState extends State<MyHomePage>
                 if (morph == null || f == null) return const SizedBox.shrink();
                 return MorphGlass(
                   frame: f,
-                  restWidth: 320,
-                  restHeight: 100,
-                  interactive: !morph.animating,
+                  restWidth: 340,
+                  restHeight: 300,
+                  interactive: true,
                   child: Padding(
                     key: const ValueKey('volume-flyout'),
-                    padding: const EdgeInsets.symmetric(horizontal: 15),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          onPressed: () {
-                            final sound = _soundSource;
-                            setState(() {
-                              sound.muted = !sound.muted;
-                              _muted = sound.muted;
-                              _volume = sound.volume;
-                            });
-                          },
-                          icon: Icon(
-                            _muted ? Icons.volume_off : Icons.volume_up,
-                            color: Colors.white,
-                            size: 22,
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                    child: SizedBox(
+                      width: 340,
+                      height: 300,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // The master row: slider first, then the small mute icon and the
+// percentage on the right. The first row is the system volume; the
+// per-app rows below the divider follow the same shape.
+                          Row(
+                            children: [
+                              Expanded(
+                                child: WaveSlider(
+                                  value: _muted ? 0.0 : _volume,
+                                  onChanged: (value) {
+                                    final sound = _soundSource;
+                                    setState(() {
+                                      sound.volume = value;
+                                      _volume = sound.volume;
+                                      _muted = sound.muted;
+                                    });
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              GestureDetector(
+                                key: const ValueKey('volume-master-mute'),
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () {
+                                  final sound = _soundSource;
+                                  setState(() {
+                                    sound.muted = !sound.muted;
+                                    _muted = sound.muted;
+                                    _volume = sound.volume;
+                                  });
+                                },
+                                child: Icon(
+                                  _muted
+                                      ? Icons.volume_off_rounded
+                                      : Icons.volume_up_rounded,
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                  size: 17,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              SizedBox(
+                                width: 32,
+                                child: Text(
+                                  '${(_volume * 100).round()}%',
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 10.5),
+                                ),
+                              ),
+                            ],
                           ),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                              minWidth: 36, minHeight: 36),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: WaveSlider(
-                            value: _muted ? 0.0 : _volume,
-                            onChanged: (value) {
-                              final sound = _soundSource;
-                              setState(() {
-                                sound.volume = value;
-                                _volume = sound.volume;
-                                _muted = sound.muted;
-                              });
-                            },
+                          const SizedBox(height: 10),
+                          // The short divider between master and apps.
+                          Container(
+                            width: 64,
+                            height: 1,
+                            color: Colors.white.withValues(alpha: 0.22),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _muted ? 'Mute' : '${(_volume * 100).round()}%',
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 12),
-                        ),
-                      ],
+                          const SizedBox(height: 10),
+                          if (_audioSessions.isEmpty)
+                            Caption(Loc.t(
+                                'No apps are playing right now',
+                                'Сейчас нет приложений со звуком'))
+                          else
+                            Expanded(
+                              child: ListView.builder(
+                                padding: EdgeInsets.zero,
+                                itemCount: _audioSessions.length,
+                                itemExtent: 40,
+                                itemBuilder: (context, i) {
+                                  final s = _audioSessions[i];
+                                  final name = s.exe.isEmpty
+                                      ? Loc.t('App ${(s.pid % 10000)}',
+                                          'Приложение ${(s.pid % 10000)}')
+                                      : '${s.exe[0].toUpperCase()}${s.exe.substring(1)}';
+                                  return Row(
+                                    children: [
+                                      Icon(
+                                        _audioAppIcon(s.exe),
+                                        size: 17,
+                                        color: Colors.white70,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      SizedBox(
+                                        width: 104,
+                                        child: Text(
+                                          name,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12.5),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: WaveSlider(
+                                          value: s.muted ? 0.0 : s.volume,
+                                          onChanged: (value) =>
+                                              _setAudioSessionVolume(
+                                                  s.pid, value),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () =>
+                                            _setAudioSessionMute(
+                                                s.pid, !s.muted),
+                                        child: Icon(
+                                          s.muted
+                                              ? Icons.volume_off
+                                              : Icons.volume_up,
+                                          size: 16,
+                                          color: s.muted
+                                              ? Colors.white38
+                                              : Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 );
               },
             ),
-            // ---- launcher ---------------------------------------------------
+            // ---- wi-fi flyout -------------------------------------------------
+            // Header ('Сети' + loupe), a divider, then the network rows: a
+            // signal-bars icon, the name, the lock. Tapping a row expands an
+            // in-row card — password entry for new networks, 'Отключить' for
+            // the pinned (already connected) one.
+            ListenableBuilder(
+              listenable: _wifiMorph ?? const AlwaysStoppedAnimation<int>(0),
+              builder: (context, _) {
+                final morph = _wifiMorph;
+                final f = morph?.frame;
+                if (morph == null || f == null) return const SizedBox.shrink();
+                final nets = [
+                  for (final net in _wifiNetworks)
+                    if (_wifiQuery.isEmpty ||
+                        net.ssid.toLowerCase().contains(_wifiQuery))
+                      net,
+                ];
+                return MorphGlass(
+                  frame: f,
+                  restWidth: 360,
+                  restHeight: 430,
+                  interactive: true,
+                  child: Padding(
+                    key: const ValueKey('wifi-flyout'),
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                    child: SizedBox(
+                      width: 360,
+                      height: 430,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                Loc.t('Networks', 'Сети'),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                onPressed: () => setState(() {
+                                  _wifiSearchOpen = !_wifiSearchOpen;
+                                  if (!_wifiSearchOpen) {
+                                    _wifiSearch.clear();
+                                    _wifiQuery = '';
+                                  } else {
+                                    WidgetsBinding.instance.addPostFrameCallback(
+                                        (_) => _wifiSearchFocus.requestFocus());
+                                  }
+                                }),
+                                icon: Icon(
+                                  _wifiSearchOpen
+                                      ? Icons.close_rounded
+                                      : Icons.search_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                    minWidth: 30, minHeight: 30),
+                              ),
+                            ],
+                          ),
+                          // The search field slides in under the header.
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOutCubic,
+                            child: _wifiSearchOpen
+                                ? Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: TextField(
+                                      controller: _wifiSearch,
+                                      onChanged: (q) =>
+                                          setState(() => _wifiQuery =
+                                              q.trim().toLowerCase()),
+                                      style: const TextStyle(
+                                          color: Colors.white, fontSize: 13),
+                                      decoration: InputDecoration(
+                                        isDense: true,
+                                        hintText: Loc.t(
+                                            'Search a network', 'Найти сеть'),
+                                        hintStyle: const TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 12.5),
+                                        prefixIcon: const Icon(
+                                            Icons.search_rounded,
+                                            size: 16,
+                                            color: Colors.white54),
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            height: 1,
+                            color: Colors.white.withValues(alpha: 0.18),
+                          ),
+                          const SizedBox(height: 6),
+                          Expanded(
+                            child: _wifiScanning && nets.isEmpty
+                                ? const Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation(
+                                            Colors.white70),
+                                      ),
+                                    ),
+                                  )
+                                : nets.isEmpty
+                                    ? Center(
+                                        child: Caption(Loc.t(
+                                            'No networks nearby',
+                                            'Сетей поблизости нет')),
+                                      )
+                                    : ListView.builder(
+                                        padding: EdgeInsets.zero,
+                                        itemCount: nets.length,
+                                        itemBuilder: (context, i) =>
+                                            _WifiRow(
+                                          key: ValueKey(
+                                              'wifi-${nets[i].ssid}'),
+                                          network: nets[i],
+                                          expanded: _wifiExpanded ==
+                                              nets[i].ssid,
+                                          busy: _wifiBusy,
+                                          autoJoin: _wifiAutoJoin,
+                                          passwordController: _wifiPassword,
+                                          onToggle: () => setState(() {
+                                            _wifiExpanded = _wifiExpanded ==
+                                                    nets[i].ssid
+                                                ? null
+                                                : nets[i].ssid;
+                                            _wifiPassword.clear();
+                                            // A network Windows already knows
+                                            // starts with the auto box on.
+                                            _wifiAutoJoin = nets[i].auto;
+                                          }),
+                                          onAutoChanged: (v) =>
+                                              setState(() => _wifiAutoJoin = v),
+                                          onConnect: () => unawaited(
+                                              _wifiConnect(
+                                                  nets[i],
+                                                  _wifiPassword.text)),
+                                          onConnectOpen: () => unawaited(
+                                              _wifiConnect(nets[i], '')),
+                                          onDisconnect: () => unawaited(
+                                              _wifiDisconnect(nets[i])),
+                                        ),
+                                      ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
             ListenableBuilder(
               listenable: _launcherMorph ?? const AlwaysStoppedAnimation<int>(0),
               builder: (context, _) {
@@ -1471,7 +2263,7 @@ class _MyHomePageState extends State<MyHomePage>
                   frame: f,
                   restWidth: 320,
                   restHeight: 296,
-                  interactive: !morph.animating,
+                  interactive: true,
                   child: SizedBox(
                     width: 320,
                     height: 296,
@@ -1487,17 +2279,17 @@ class _MyHomePageState extends State<MyHomePage>
                               runAlignment: WrapAlignment.center,
                               spacing: 6,
                               runSpacing: 6,
+                              // No per-app entrance animation: the tiles are
+                              // already inside the morphing glass, another
+                              // motion on top only made the menu feel slow.
                               children: [
                                 for (var i = 0; i < _launcherApps.length; i++)
-                                  _LauncherEntrance(
-                                    index: i,
-                                    child: _LauncherTile(
-                                      key: ValueKey(
-                                          'launcher-app-${_launcherApps[i].id}'),
-                                      icon: iconForApp(_launcherApps[i]),
-                                      label: _launcherApps[i].title,
-                                      onTap: () => _openApp(_launcherApps[i]),
-                                    ),
+                                  _LauncherTile(
+                                    key: ValueKey(
+                                        'launcher-app-${_launcherApps[i].id}'),
+                                    icon: iconForApp(_launcherApps[i]),
+                                    label: _launcherLabel(_launcherApps[i]),
+                                    onTap: () => _openApp(_launcherApps[i]),
                                   ),
                               ],
                             ),
@@ -1505,10 +2297,9 @@ class _MyHomePageState extends State<MyHomePage>
                           const SizedBox(height: 6),
                           _LauncherStrip(
                             onSettings: () => _openSettingsAt(null),
-                            onPower: () {
-                              _launcherMorph?.close();
-                              _toggleMenu();
-                            },
+                            // The power menu: a small dropdown over the
+                            // launcher's own power button (not the old panel).
+                            onPower: _togglePowerMenu,
                             onTerminal: () => _openApp(ShellApp.terminal),
                           ),
                         ],
@@ -1529,7 +2320,7 @@ class _MyHomePageState extends State<MyHomePage>
                   frame: f,
                   restWidth: 340,
                   restHeight: 270,
-                  interactive: !morph.animating,
+                  interactive: true,
                   child: SizedBox(
                     width: 340,
                     height: 270,
@@ -1539,8 +2330,10 @@ class _MyHomePageState extends State<MyHomePage>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            'Desktop ${_workspaces.activeIndex + 1} '
-                            'of ${_workspaces.count}',
+                            // "Desktop 1 of 4" in the shell language.
+                            '${Loc.t('Desktop', 'Стол')} '
+                            '${_workspaces.activeIndex + 1} '
+                            '${Loc.t('of', 'из')} ${_workspaces.count}',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 12,
@@ -1590,7 +2383,7 @@ class _MyHomePageState extends State<MyHomePage>
                               _WorkspaceAction(
                                 key: const ValueKey('workspace-new'),
                                 icon: Icons.add_rounded,
-                                label: 'New',
+                                label: Loc.t('New', 'Создать'),
                                 enabled: _workspaces.canCreate,
                                 onTap: _newWorkspace,
                               ),
@@ -1598,7 +2391,7 @@ class _MyHomePageState extends State<MyHomePage>
                               _WorkspaceAction(
                                 key: const ValueKey('workspace-prev'),
                                 icon: Icons.arrow_back_rounded,
-                                label: 'Back',
+                                label: Loc.t('Back', 'Назад'),
                                 enabled: _workspaces.count > 1,
                                 onTap: _previousWorkspace,
                               ),
@@ -1606,7 +2399,7 @@ class _MyHomePageState extends State<MyHomePage>
                               _WorkspaceAction(
                                 key: const ValueKey('workspace-next'),
                                 icon: Icons.arrow_forward_rounded,
-                                label: 'Forward',
+                                label: Loc.t('Forward', 'Вперёд'),
                                 enabled: _workspaces.count > 1,
                                 onTap: _nextWorkspace,
                               ),
@@ -1614,7 +2407,7 @@ class _MyHomePageState extends State<MyHomePage>
                               _WorkspaceAction(
                                 key: const ValueKey('workspace-close'),
                                 icon: Icons.delete_outline_rounded,
-                                label: 'Close',
+                                label: Loc.t('Close', 'Закрыть'),
                                 enabled: _workspaces.canClose,
                                 onTap: _closeWorkspace,
                               ),
@@ -1627,70 +2420,58 @@ class _MyHomePageState extends State<MyHomePage>
                 );
               },
             ),
-            // ---- power menu -------------------------------------------------
+            // ---- power flyout -----------------------------------------------
+            // A small dropdown that rises above the launcher's power button
+            // with the four real system actions. Every item fires instantly,
+            // no confirm dialogs.
             ListenableBuilder(
-              listenable: _menuMorph ?? const AlwaysStoppedAnimation<int>(0),
+              listenable: _powerMorph ?? const AlwaysStoppedAnimation<int>(0),
               builder: (context, _) {
-                final morph = _menuMorph;
+                final morph = _powerMorph;
                 final f = morph?.frame;
                 if (morph == null || f == null) return const SizedBox.shrink();
                 return MorphGlass(
                   frame: f,
-                  restWidth: 700,
-                  restHeight: 550,
-                  interactive: !morph.animating,
-                  child: SizedBox(
-                    width: 700,
-                    height: 550,
-                    child: Stack(
+                  restWidth: 200,
+                  restHeight: 180,
+                  interactive: true,
+                  child: Padding(
+                    key: const ValueKey('power-flyout'),
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Positioned(
-                          bottom: 1.0,
-                          left: 0,
-                          right: 0,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const _PowerButton(
-                                icon: Icons.lock_outline,
-                                onTap: lockWorkstation,
-                              ),
-                              const SizedBox(width: 1),
-                              _PowerButton(
-                                icon: Icons.logout,
-                                onTap: () => _confirmThen(signOut, 'Sign out?'),
-                              ),
-                              const SizedBox(width: 1),
-                              _PowerButton(
-                                icon: Icons.restart_alt,
-                                onTap: () => _confirmThen(
-                                  restartMachine,
-                                  'Restart the computer?',
-                                ),
-                              ),
-                              const SizedBox(width: 1),
-                              _PowerButton(
-                                icon: Icons.bedtime,
-                                onTap: () => _confirmThen(
-                                  sleepMachine,
-                                  'Put the computer to sleep?',
-                                ),
-                              ),
-                              const SizedBox(width: 1),
-                              _PowerButton(
-                                icon: Icons.power_settings_new,
-                                onTap: () => _confirmThen(
-                                  shutdownMachine,
-                                  'Shut down the computer?',
-                                ),
-                              ),
-                              const SizedBox(width: 1),
-                              _PowerButton(
-                                icon: Icons.settings,
-                                onTap: () => _openSettingsAt(null),
-                              ),
-                            ],
-                          ),
+                        _PowerMenuItem(
+                          icon: Icons.power_settings_new,
+                          label: Loc.t('Shut down', 'Выключить'),
+                          onTap: () {
+                            morph.close();
+                            unawaited(shutdownMachine());
+                          },
+                        ),
+                        _PowerMenuItem(
+                          icon: Icons.restart_alt,
+                          label: Loc.t('Restart', 'Перезагрузить'),
+                          onTap: () {
+                            morph.close();
+                            unawaited(restartMachine());
+                          },
+                        ),
+                        _PowerMenuItem(
+                          icon: Icons.bedtime,
+                          label: Loc.t('Sleep', 'Спящий режим'),
+                          onTap: () {
+                            morph.close();
+                            unawaited(sleepMachine());
+                          },
+                        ),
+                        _PowerMenuItem(
+                          icon: Icons.logout,
+                          label: Loc.t('Exit to Windows', 'Выйти в Windows'),
+                          onTap: () {
+                            morph.close();
+                            unawaited(signOut());
+                          },
                         ),
                       ],
                     ),
@@ -1711,10 +2492,41 @@ class _MyHomePageState extends State<MyHomePage>
                   restHeight: 400,
                   tint: Colors.transparent,
                   borderColor: Colors.transparent,
-                  interactive: !morph.animating,
+                  interactive: true,
                   child: PlayerPanel(
+                    key: const ValueKey('player-flyout'),
                     player: _player,
                     onOpenTracks: _openMusics,
+                  ),
+                );
+              },
+            ),
+            // ---- programs panel ----------------------------------------------
+            // The machine's Start-menu: a search on top, every installed app
+            // below, a click launches it through explorer. Clicking anywhere
+            // outside the glass closes it (the shared dismiss layer).
+            ListenableBuilder(
+              listenable: _appsMorph ?? const AlwaysStoppedAnimation<int>(0),
+              builder: (context, _) {
+                final morph = _appsMorph;
+                final f = morph?.frame;
+                if (morph == null || f == null) return const SizedBox.shrink();
+                return MorphGlass(
+                  key: const ValueKey('apps-flyout'),
+                  frame: f,
+                  restWidth: 520,
+                  restHeight: 480,
+                  interactive: true,
+                  tint: const Color(0xB8111113),
+                  child: _AppsPanel(
+                    windowsApps: _windowsApps,
+                    search: _appsSearch,
+                    focus: _appsFocus,
+                    onLaunch: (entry) {
+                      unawaited(WindowsApps.launch(entry));
+                      _appsMorph?.close();
+                      setState(() {});
+                    },
                   ),
                 );
               },
@@ -1726,6 +2538,7 @@ class _MyHomePageState extends State<MyHomePage>
               right: panelMargin,
               bottom: 10.0,
               child: ClipRRect(
+                key: const ValueKey('dock'),
                 borderRadius: BorderRadius.circular(15.0),
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
@@ -1739,10 +2552,17 @@ class _MyHomePageState extends State<MyHomePage>
                       ),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 5.0),
-                    child: Column(
+                    child: Stack(
                       children: [
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 176),
+                        // The task strip scrolls in its own layer, with room
+                        // at the bottom for the launcher. The desktops button
+                        // floats dead centre of the dock, independent of how
+                        // many windows are open.
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 62,
                           child: SingleChildScrollView(
                             child: _DockTasks(
                               windows: openWindows,
@@ -1751,11 +2571,11 @@ class _MyHomePageState extends State<MyHomePage>
                             ),
                           ),
                         ),
-                        Expanded(
-                          child: Center(
-                            child: Listener(
-                              onPointerSignal: _onDesktopWheel,
-                              child: MouseRegion(
+                        Align(
+                          alignment: Alignment.center,
+                          child: Listener(
+                          onPointerSignal: _onDesktopWheel,
+                          child: MouseRegion(
                                 cursor: SystemMouseCursors.click,
                                 onEnter: (_) =>
                                     setState(() => _isDesktopsHovered = true),
@@ -1843,12 +2663,14 @@ class _MyHomePageState extends State<MyHomePage>
                               ),
                             ),
                           ),
-                        ),
-                        PanelIcon(
-                          key: const ValueKey('apps-button'),
-                          icon: _isLauncherOpen ? Icons.close : Icons.apps,
-                          onTap: _toggleLauncher,
-                          spacing: 1.0,
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: PanelIcon(
+                            key: const ValueKey('apps-button'),
+                            icon: _isLauncherOpen ? Icons.close : Icons.apps,
+                            onTap: _toggleLauncher,
+                            spacing: 1.0,
+                          ),
                         ),
                       ],
                     ),
@@ -1867,6 +2689,7 @@ class _MyHomePageState extends State<MyHomePage>
     );
   }
 
+  /// Launcher tiles in their shelf order; Configs sits right after Musics.
   List<ShellApp> get _launcherApps => const [
         ShellApp.calculator,
         ShellApp.notepad,
@@ -1876,7 +2699,25 @@ class _MyHomePageState extends State<MyHomePage>
         ShellApp.tasks,
         ShellApp.browser,
         ShellApp.musics,
+        ShellApp.configs,
       ];
+
+  /// Launcher tile labels in the shell language. Windows titles (the window
+  /// chrome) stay English; the launcher is what the user reads.
+  String _launcherLabel(ShellApp app) => Loc.t(app.title, switch (app.id) {
+        'calculator' => 'Калькулятор',
+        'notepad' => 'Блокнот',
+        'files' => 'Файлы',
+        'paint' => 'Рисование',
+        'snip' => 'Ножницы',
+        'tasks' => 'Задачи',
+        'browser' => 'Браузер',
+        'musics' => 'Музыка',
+        'configs' => 'Конфиги',
+        'settings' => 'Настройки',
+        'terminal' => 'Терминал',
+        _ => app.title,
+      });
 
   Widget _sliderRow({
     required IconData icon,
@@ -1904,37 +2745,6 @@ class _MyHomePageState extends State<MyHomePage>
       ],
     );
   }
-
-  void _confirmThen(Future<void> Function() action, String question) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xF01A1A1A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Text(
-          question,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              unawaited(action());
-            },
-            child: const Text('Yes', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // === part 4 ===
@@ -1942,7 +2752,11 @@ class _MyHomePageState extends State<MyHomePage>
 /// The giant clock. It owns its one-second timer, so the shell does not
 /// rebuild the whole desktop (and every open window) every second.
 class _Clock extends StatefulWidget {
-  const _Clock();
+  const _Clock({this.deltaMinutes = 0});
+
+  /// The chosen zone's offset minus this machine's offset. The clock ticks in
+  /// UTC and re-localizes through it, so DST is handled by the zone table.
+  final int deltaMinutes;
 
   @override
   State<_Clock> createState() => _ClockState();
@@ -1955,11 +2769,22 @@ class _ClockState extends State<_Clock> {
   @override
   void initState() {
     super.initState();
-    _time = _format(DateTime.now());
+    _time = _format(_now());
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final next = _format(DateTime.now());
+      final next = _format(_now());
       if (mounted && next != _time) setState(() => _time = next);
     });
+  }
+
+  DateTime _now() =>
+      DateTime.now().add(Duration(minutes: widget.deltaMinutes));
+
+  @override
+  void didUpdateWidget(covariant _Clock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.deltaMinutes == widget.deltaMinutes) return;
+    final next = _format(_now());
+    if (next != _time) setState(() => _time = next);
   }
 
   static String _format(DateTime now) =>
@@ -1992,15 +2817,17 @@ class _ClockState extends State<_Clock> {
 }
 
 /// The top bar: brightness on the left, the mini player in the middle, the
-/// radios and the sound on the right. The old four-squares button next to the
-/// player is gone — it was decoration that did nothing.
+/// four-squares programs button right before the player, the radios and the
+/// sound on the right.
 class _Waybar extends StatelessWidget {
   final PlayerController player;
   final VoidCallback onPlayer;
+  final VoidCallback onApps;
   final VoidCallback onBrightness;
   final VoidCallback onWifi;
   final VoidCallback onBluetooth;
   final VoidCallback onVolume;
+  final List<String> rightItems;
   final bool wifiOn;
   final bool bluetoothOn;
   final bool muted;
@@ -2009,10 +2836,12 @@ class _Waybar extends StatelessWidget {
     super.key,
     required this.player,
     required this.onPlayer,
+    required this.onApps,
     required this.onBrightness,
     required this.onWifi,
     required this.onBluetooth,
     required this.onVolume,
+    required this.rightItems,
     required this.wifiOn,
     required this.bluetoothOn,
     required this.muted,
@@ -2020,6 +2849,10 @@ class _Waybar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final right = [
+      for (final key in rightItems)
+        if (key != 'brightness') key,
+    ];
     return ClipRRect(
       borderRadius: const BorderRadius.only(
         bottomLeft: Radius.circular(25.0),
@@ -2044,46 +2877,49 @@ class _Waybar extends StatelessWidget {
           ),
           child: Stack(
             children: [
+              // The four-squares button and the mini player are one centred
+              // row. As a Positioned pair they overlapped once the bar
+              // widened, and the button disappeared under the player.
               Center(
-                child: MiniPlayer(player: player, onOpen: onPlayer),
-              ),
-              Positioned(
-                left: 5,
-                top: 10,
-                child: _WaybarButton(
-                  key: const ValueKey('topbar-brightness'),
-                  icon: Icons.brightness_6,
-                  tooltip: 'Brightness',
-                  onTap: onBrightness,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _WaybarButton(
+                      key: const ValueKey('topbar-programs'),
+                      icon: Icons.grid_view_rounded,
+                      tooltip: Loc.t('Programs', 'Программы'),
+                      onTap: onApps,
+                    ),
+                    const SizedBox(width: 8),
+                    MiniPlayer(player: player, onOpen: onPlayer),
+                  ],
                 ),
               ),
+              if (rightItems.contains('brightness'))
+                Positioned(
+                  left: 5,
+                  top: 10,
+                  child: _WaybarButton(
+                    key: const ValueKey('topbar-brightness'),
+                    icon: Icons.brightness_6,
+                    tooltip: Loc.t('Brightness', 'Яркость'),
+                    onTap: onBrightness,
+                  ),
+                ),
               Positioned(
                 right: 5,
                 top: 10,
                 child: Row(
+                  // Data-driven right side: the vibe-bar pane's list decides
+                  // what sits here. Brightness is painted on the left, so it
+                  // is filtered from this row (and its index math). Gaps only
+                  // between buttons, so the last one lands exactly on the
+                  // morph anchor from ShellLayout.
                   children: [
-                    _WaybarButton(
-                      key: const ValueKey('topbar-bluetooth'),
-                      icon: Icons.bluetooth,
-                      tooltip: 'Bluetooth',
-                      active: bluetoothOn,
-                      onTap: onBluetooth,
-                    ),
-                    const SizedBox(width: 4),
-                    _WaybarButton(
-                      key: const ValueKey('topbar-volume'),
-                      icon: muted ? Icons.volume_off : Icons.volume_up,
-                      tooltip: 'Sound',
-                      onTap: onVolume,
-                    ),
-                    const SizedBox(width: 4),
-                    _WaybarButton(
-                      key: const ValueKey('topbar-wifi'),
-                      icon: Icons.wifi,
-                      tooltip: 'Wi-Fi',
-                      active: wifiOn,
-                      onTap: onWifi,
-                    ),
+                    for (var i = 0; i < right.length; i++) ...[
+                      _rightButton(right[i]),
+                      if (i < right.length - 1) const SizedBox(width: 4),
+                    ],
                   ],
                 ),
               ),
@@ -2093,6 +2929,67 @@ class _Waybar extends StatelessWidget {
       ),
     );
   }
+
+  Widget _rightButton(String key) {
+    switch (key) {
+      case 'bluetooth':
+        return _WaybarButton(
+          key: const ValueKey('topbar-bluetooth'),
+          icon: Icons.bluetooth,
+          tooltip: Loc.t('Bluetooth', 'Блютус'),
+          active: bluetoothOn,
+          onTap: onBluetooth,
+        );
+      case 'sound':
+        return _WaybarButton(
+          key: const ValueKey('topbar-volume'),
+          icon: muted ? Icons.volume_off : Icons.volume_up,
+          tooltip: Loc.t('Sound', 'Звук'),
+          onTap: onVolume,
+        );
+      case 'wifi':
+        return _WaybarButton(
+          key: const ValueKey('topbar-wifi'),
+          icon: Icons.wifi,
+          tooltip: Loc.t('Wi-Fi', 'Wi-Fi'),
+          active: wifiOn,
+          onTap: onWifi,
+        );
+      default:
+        // The vibe-bar placeholders (buffer, emoji, updates, calendar,
+        // notifications): visible and labelled, but their flyouts come later.
+        return _WaybarButton(
+          key: ValueKey('topbar-$key'),
+          icon: _waybarItemIcon(key, muted),
+          tooltip: _waybarItemLabel(key),
+          onTap: () {},
+        );
+    }
+  }
+
+  static IconData _waybarItemIcon(String key, bool muted) => switch (key) {
+        'sound' => muted ? Icons.volume_off : Icons.volume_up,
+        'wifi' => Icons.wifi,
+        'bluetooth' => Icons.bluetooth,
+        'clipboard' => Icons.content_paste_rounded,
+        'emoji' => Icons.emoji_emotions_rounded,
+        'updates' => Icons.system_update_rounded,
+        'calendar' => Icons.calendar_today_rounded,
+        'notifications' => Icons.notifications_none_rounded,
+        _ => Icons.extension_rounded,
+      };
+
+  static String _waybarItemLabel(String key) => switch (key) {
+        'sound' => Loc.t('Sound', 'Звук'),
+        'wifi' => Loc.t('Wi-Fi', 'Wi-Fi'),
+        'bluetooth' => Loc.t('Bluetooth', 'Блютус'),
+        'clipboard' => Loc.t('Clipboard', 'Буфер обмена'),
+        'emoji' => Loc.t('Emoji', 'Эмодзи'),
+        'updates' => Loc.t('Updates', 'Обновления'),
+        'calendar' => Loc.t('Calendar', 'Календарь'),
+        'notifications' => Loc.t('Notifications', 'Уведомления'),
+        _ => key,
+      };
 }
 
 class _WaybarButton extends StatefulWidget {
@@ -2144,6 +3041,334 @@ class _WaybarButtonState extends State<_WaybarButton> {
             ),
           ),
         ),
+      ),
+     );
+  }
+}
+
+// ---- wi-fi flyout pieces ------------------------------------------------------
+
+/// Signal quality as four bars. A two-bar network shows two bars — the rest
+/// are simply absent, not dimmed, exactly as asked.
+class _WifiBars extends StatelessWidget {
+  final int signal;
+  final Color color;
+
+  const _WifiBars({required this.signal, required this.color});
+
+  int get level {
+    if (signal >= 78) return 4;
+    if (signal >= 55) return 3;
+    if (signal >= 30) return 2;
+    if (signal >= 10) return 1;
+    return 0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 19,
+      height: 15,
+      child: CustomPaint(
+        painter: _WifiBarsPainter(level: level, color: color),
+      ),
+    );
+  }
+}
+
+class _WifiBarsPainter extends CustomPainter {
+  final int level;
+  final Color color;
+
+  const _WifiBarsPainter({required this.level, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    const widths = 3.0;
+    const gap = 2.2;
+    for (var i = 0; i < 4; i++) {
+      if (i >= level) continue;
+      final height = 4.0 + i * 3.2;
+      final left = i * (widths + gap);
+      final bottom = size.height;
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, bottom - height, widths, height),
+        const Radius.circular(1.4),
+      );
+      canvas.drawRRect(rect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WifiBarsPainter oldDelegate) =>
+      oldDelegate.level != level || oldDelegate.color != color;
+}
+
+/// A tiny icon for a mixer row, guessed from the exe name.
+IconData _audioAppIcon(String exe) {
+  if (exe.contains('chrome') ||
+      exe.contains('msedge') ||
+      exe.contains('firefox') ||
+      exe.contains('opera')) {
+    return Icons.public_rounded;
+  }
+  if (exe.contains('spotify') || exe.contains('music')) {
+    return Icons.music_note_rounded;
+  }
+  if (exe.contains('discord') || exe.contains('telegram') ||
+      exe.contains('teams')) {
+    return Icons.chat_bubble_rounded;
+  }
+  if (exe.contains('steam') || exe.contains('game')) {
+    return Icons.sports_esports_rounded;
+  }
+  return Icons.app_shortcut_rounded;
+}
+
+/// One network row: [bars] [ssid] [lock]; expanded, the connect card slides
+/// out underneath — a password field + the auto-join checkbox for new
+/// networks, 'Подключено' + 'Отключить' for the pinned one.
+class _WifiRow extends StatelessWidget {
+  final WifiNetwork network;
+  final bool expanded;
+  final bool busy;
+  final bool autoJoin;
+  final TextEditingController passwordController;
+  final VoidCallback onToggle;
+  final ValueChanged<bool> onAutoChanged;
+  final VoidCallback onConnect;
+  final VoidCallback onConnectOpen;
+  final VoidCallback onDisconnect;
+
+  const _WifiRow({
+    super.key,
+    required this.network,
+    required this.expanded,
+    required this.busy,
+    required this.autoJoin,
+    required this.passwordController,
+    required this.onToggle,
+    required this.onAutoChanged,
+    required this.onConnect,
+    required this.onConnectOpen,
+    required this.onDisconnect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final net = network;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // The whole row is the expander. It was wired to a callback that
+        // nothing called, so tapping a network did nothing at all.
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            key: ValueKey('wifi-row-${net.ssid}'),
+            behavior: HitTestBehavior.opaque,
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                children: [
+                  _WifiBars(
+                    signal: net.signal,
+                    color: net.connected ? Colors.white : Colors.white70,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      net.ssid,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight:
+                            net.connected ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  if (net.connected)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 7),
+                      child: Text(
+                        Loc.t('Connected', 'Подключено'),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 11),
+                      ),
+                    ),
+                  Icon(
+                    net.secure
+                        ? Icons.lock_rounded
+                        : Icons.lock_open_rounded,
+                    size: 13,
+                    color: Colors.white54,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // The expandable card under the row.
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: expanded ? _card() : const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+
+  Widget _card() {
+    final net = network;
+    Widget content;
+    if (net.connected) {
+      // The pinned network: joined on Windows, so it stays joined here. The
+      // card is vertical: the flyout is only 360 px wide and the checkbox
+      // label plus a button on one line overflowed it.
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            Loc.t('Connected, pinned', 'Подключено, закреплено'),
+            style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+          ),
+          const SizedBox(height: 6),
+          _checkRow(autoJoin, onAutoChanged),
+          const SizedBox(height: 8),
+          _cardButton(
+            Loc.t('Disconnect', 'Отключить'),
+            onTap: onDisconnect,
+            danger: true,
+          ),
+        ],
+      );
+    } else if (!net.secure) {
+      // Open network: no password ever needed.
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _checkRow(autoJoin, onAutoChanged),
+          const SizedBox(height: 8),
+          _cardButton(
+            Loc.t('Connect', 'Подключиться'),
+            onTap: onConnectOpen,
+          ),
+        ],
+      );
+    } else {
+      // Password network: the input expands right below the row.
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: passwordController,
+            obscureText: true,
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            onSubmitted: (_) => onConnect(),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: Loc.t('Enter password', 'Введите пароль'),
+              hintStyle:
+                  const TextStyle(color: Colors.white38, fontSize: 12.5),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _checkRow(autoJoin, onAutoChanged),
+          const SizedBox(height: 8),
+          if (busy)
+            const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(Colors.white70),
+                ),
+              ),
+            )
+          else
+            _cardButton(
+              Loc.t('Connect', 'Подключиться'),
+              onTap: onConnect,
+            ),
+        ],
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 8, 4, 10),
+      child: content,
+    );
+  }
+
+  Widget _cardButton(
+    String label, {
+    required VoidCallback onTap,
+    bool danger = false,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: danger ? 0.10 : 0.16),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: danger ? Colors.white70 : Colors.white,
+            fontSize: 12,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The auto-join checkbox, drawn in-shell so it matches the glass panels.
+  static Widget _checkRow(bool value, ValueChanged<bool> onChanged) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onChanged(!value),
+      child: Row(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: 15,
+            height: 15,
+            decoration: BoxDecoration(
+              color: value
+                  ? Colors.white.withValues(alpha: 0.85)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                  color:
+                      Colors.white.withValues(alpha: value ? 0.85 : 0.4)),
+            ),
+            child: value
+                ? const Icon(Icons.check_rounded,
+                    size: 11, color: Colors.black87)
+                : const SizedBox.shrink(),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              Loc.t(
+                'Connect automatically',
+                'Подключаться автоматически',
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2200,7 +3425,9 @@ class _DockTasksState extends State<_DockTasks> {
         continue;
       }
       _leaving.add(window.id);
-      Timer(const Duration(milliseconds: 210), () {
+      // One dock-fade is 240 ms; the timer that drops the row waits a bit
+      // over that, so a window never vanishes before its fade ends.
+      Timer(const Duration(milliseconds: 260), () {
         if (!mounted) return;
         setState(() {
           _shown.removeWhere((w) => w.id == window.id);
@@ -2344,7 +3571,9 @@ class _DockTaskState extends State<_DockTask>
             children: [
               Icon(
                 widget.icon,
-                size: 19,
+                // Bigger running-app icons in the dock: more visible at a
+                // glance, the hit area is unchanged.
+                size: 25,
                 color: widget.minimized
                     ? Colors.white38
                     : (widget.active ? Colors.white : Colors.white70),
@@ -2426,110 +3655,64 @@ class _PanelIconState extends State<PanelIcon> {
   }
 }
 
-class _PowerButton extends StatefulWidget {
+/// One row of the power dropdown: icon + label, whole row is the button.
+/// Rows start as bare text: only hovering lights a soft white background —
+/// there is no pressed effect and no outline around the rows.
+class _PowerMenuItem extends StatefulWidget {
   final IconData icon;
-  final VoidCallback? onTap;
+  final String label;
+  final VoidCallback onTap;
 
-  const _PowerButton({required this.icon, this.onTap});
+  const _PowerMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
-  State<_PowerButton> createState() => _PowerButtonState();
+  State<_PowerMenuItem> createState() => _PowerMenuItemState();
 }
 
-class _PowerButtonState extends State<_PowerButton> {
+class _PowerMenuItemState extends State<_PowerMenuItem> {
   bool _isHovered = false;
-  bool _isPressed = false;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2.0),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() {
-          _isHovered = false;
-          _isPressed = false;
-        }),
-        child: GestureDetector(
-          onTapDown: (_) => setState(() => _isPressed = true),
-          onTapUp: (_) => setState(() => _isPressed = false),
-          onTapCancel: () => setState(() => _isPressed = false),
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: _isPressed
-                  ? Colors.white.withValues(alpha: 0.3)
-                  : _isHovered
-                      ? Colors.white.withValues(alpha: 0.15)
-                      : Colors.transparent,
-              borderRadius: BorderRadius.circular(10.0),
-            ),
-            child: Icon(widget.icon, color: Colors.white, size: 21),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 130),
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          // No border and no pressed state by request: the hover tint is the
+          // only feedback a row gives.
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: _isHovered ? 0.12 : 0.0),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(widget.icon, color: Colors.white, size: 16),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// One launcher tile, staggered in when the launcher opens.
-class _LauncherEntrance extends StatefulWidget {
-  final int index;
-  final Widget child;
-
-  const _LauncherEntrance({required this.index, required this.child});
-
-  @override
-  State<_LauncherEntrance> createState() => _LauncherEntranceState();
-}
-
-class _LauncherEntranceState extends State<_LauncherEntrance>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _reveal = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-  );
-
-  late final CurvedAnimation _fade =
-      CurvedAnimation(parent: _reveal, curve: Curves.easeOut);
-
-  late final CurvedAnimation _pop = CurvedAnimation(
-    parent: _reveal,
-    curve: Curves.easeOutBack,
-  );
-
-  Timer? _delay;
-
-  @override
-  void initState() {
-    super.initState();
-    _delay = Timer(
-      Duration(milliseconds: 30 + widget.index * 22),
-      () {
-        if (mounted) _reveal.forward();
-      },
-    );
-  }
-
-  @override
-  void dispose() {
-    _delay?.cancel();
-    _fade.dispose();
-    _pop.dispose();
-    _reveal.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fade,
-      child: ScaleTransition(
-        scale: Tween<double>(begin: 0.82, end: 1.0).animate(_pop),
-        child: widget.child,
       ),
     );
   }
@@ -2553,27 +3736,18 @@ class _LauncherTile extends StatefulWidget {
 }
 
 class _LauncherTileState extends State<_LauncherTile> {
-  bool _isHovered = false;
-
   @override
   Widget build(BuildContext context) {
+    // Hover feedback is the cursor alone. The old translucent white wash read
+    // as "the tile goes dark" over the glass, which the user asked to remove.
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+        child: SizedBox(
           width: 92,
           height: 58,
-          decoration: BoxDecoration(
-            color: _isHovered
-                ? Colors.white.withValues(alpha: 0.16)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(14.0),
-          ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -2621,7 +3795,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-settings'),
               icon: Icons.settings_outlined,
-              label: 'Settings',
+              label: Loc.t('Settings', 'Настройки'),
               onTap: onSettings,
             ),
           ),
@@ -2629,7 +3803,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-power'),
               icon: Icons.power_settings_new,
-              label: 'Power',
+              label: Loc.t('Power', 'Питание'),
               onTap: onPower,
             ),
           ),
@@ -2637,7 +3811,7 @@ class _LauncherStrip extends StatelessWidget {
             child: _LauncherAction(
               key: const ValueKey('launcher-terminal'),
               icon: Icons.terminal_outlined,
-              label: 'Terminal',
+              label: Loc.t('Terminal', 'Терминал'),
               onTap: onTerminal,
             ),
           ),
@@ -2764,6 +3938,226 @@ class _WorkspaceActionState extends State<_WorkspaceAction> {
                 style: TextStyle(
                   color: enabled ? Colors.white70 : Colors.white24,
                   fontSize: 9,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+/// The real-programs panel: a dark glass card with the machine's Start-menu.
+/// The search row filters as the user types; a row launches its app through
+/// explorer.exe and closes the panel.
+class _AppsPanel extends StatefulWidget {
+  /// What Get-StartApps returned (empty while the background scan runs).
+  final List<WindowsAppEntry> windowsApps;
+  final TextEditingController search;
+  final FocusNode focus;
+  final ValueChanged<WindowsAppEntry> onLaunch;
+
+  const _AppsPanel({
+    required this.windowsApps,
+    required this.search,
+    required this.focus,
+    required this.onLaunch,
+  });
+
+  @override
+  State<_AppsPanel> createState() => _AppsPanelState();
+}
+
+class _AppsPanelState extends State<_AppsPanel> {
+  @override
+  void initState() {
+    super.initState();
+    // Typing filters the list; the shell itself must not rebuild for that.
+    widget.search.addListener(_onSearch);
+  }
+
+  void _onSearch() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    // The controller is owned by the shell; just stop listening.
+    widget.search.removeListener(_onSearch);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = widget.search.text.trim().toLowerCase();
+    final rows = widget.windowsApps
+        .where((a) => a.name.toLowerCase().contains(query))
+        .toList();
+    return Padding(
+      key: const ValueKey('apps-panel'),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // The search row: type and the list narrows under your fingers.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.search, color: Colors.white54, size: 17),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('apps-search'),
+                    controller: widget.search,
+                    focusNode: widget.focus,
+                    style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                    cursorColor: Colors.white,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                      hintText: Loc.t('Search apps', 'Поиск приложений'),
+                      hintStyle: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+                if (widget.search.text.isNotEmpty)
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      widget.search.clear();
+                      _appsFocusBack();
+                    },
+                    child: const Icon(Icons.close, color: Colors.white38, size: 15),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: rows.isEmpty
+                ? Center(
+                    child: Text(
+                      // Empty while the background Start-menu scan runs; the
+                      // "nothing found" line answers a filtered search.
+                      widget.windowsApps.isEmpty
+                          ? Loc.t('Reading the Start menu...', 'Читаю меню Пуск...')
+                          : Loc.t('Nothing found', 'Ничего не найдено'),
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  )
+                : ListView(
+                    key: const ValueKey('apps-list'),
+                    children: [
+                      for (final app in rows)
+                        _AppsRow(entry: app, onTap: () => widget.onLaunch(app)),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The clear "x" only clears the text; keeping focus lets the user keep
+  /// typing right after.
+  void _appsFocusBack() {
+    setState(() {});
+    widget.focus.requestFocus();
+  }
+}
+
+/// One installed app in the programs panel: icon on the left, name above the
+/// category subtitle.
+class _AppsRow extends StatefulWidget {
+  final WindowsAppEntry entry;
+  final VoidCallback onTap;
+
+  const _AppsRow({required this.entry, required this.onTap});
+
+  @override
+  State<_AppsRow> createState() => _AppsRowState();
+}
+
+class _AppsRowState extends State<_AppsRow> {
+  bool _hovered = false;
+
+  IconData get _icon => switch (widget.entry.description) {
+        'browser' => Icons.public_rounded,
+        'game' => Icons.sports_esports_rounded,
+        _ => Icons.apps_rounded,
+      };
+
+  String get _subtitle => Loc.t(switch (widget.entry.description) {
+        'browser' => 'Browser',
+        'game' => 'Game',
+        _ => 'Application',
+      }, switch (widget.entry.description) {
+        'browser' => 'Браузер',
+        'game' => 'Игра',
+        _ => 'Приложение',
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.symmetric(vertical: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: _hovered ? 0.10 : 0.0),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.09),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(_icon, color: Colors.white70, size: 17),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.entry.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      _subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white38, fontSize: 10),
+                    ),
+                  ],
                 ),
               ),
             ],

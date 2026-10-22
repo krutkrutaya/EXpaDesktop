@@ -8,11 +8,14 @@
 // Run with: flutter test
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:exp_desktop/main.dart';
 import 'package:exp_desktop/playback/player_controller.dart';
 import 'package:exp_desktop/radio_control.dart';
+import 'package:exp_desktop/shell_prefs.dart';
 import 'package:exp_desktop/sound_control.dart';
+import 'package:exp_desktop/wifi_control.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,9 +31,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the waybar has no dead four-squares button', (tester) async {
+  testWidgets('the programs button sits beside the mini player and opens apps',
+      (tester) async {
     await _pumpShell(tester);
-    expect(find.byIcon(Icons.widgets_outlined), findsNothing);
+
+    final programs = find.byKey(const ValueKey('topbar-programs'));
+    final player = find.byKey(const ValueKey('mini-player'));
+    expect(programs, findsOneWidget);
+    expect(player, findsOneWidget);
+
+    // The four-squares button is to the left of the mini player, on the same
+    // centre line — the layout that had hidden it behind the player.
+    final programsCentre = tester.getCenter(programs);
+    final playerCentre = tester.getCenter(player);
+    expect(programsCentre.dx, lessThan(playerCentre.dx));
+    expect((programsCentre.dy - playerCentre.dy).abs(), lessThan(1.5));
+
+    await tester.tap(programs);
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('apps-panel')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a launcher tile opens an in-app window and closes the launcher',
@@ -59,10 +79,9 @@ void main() {
     await _settle(tester);
     await tester.tap(find.byKey(const ValueKey('launcher-app-calculator')));
 
-    // The launcher shrinks away first (it plays its close at 2.6x); the window
-    // starts its own entrance ~150 ms later, so it is not hidden behind the
-    // menu. A few frames into that entrance it is still transparent.
-    await tester.pump(const Duration(milliseconds: 160));
+    // The launcher shrinks away at 2.6x while the window starts its own pop in
+    // the same frame: no artificial 150 ms pause before anything appears.
+    // A few frames in, the window is still translucent.
     await tester.pump(const Duration(milliseconds: 32));
     final opacity = tester.widget<Opacity>(
       find.descendant(
@@ -154,6 +173,21 @@ void main() {
     expect(find.byKey(const ValueKey('tasks-input')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('dock-app-tasks')));
+    // The restored window un-pinches out of the dock: one frame in, the
+    // genie is still near the icon, not at full size.
+    await tester.pump();
+    final restoredTransform = tester.widget<Transform>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('window-1')),
+            matching: find.byKey(const ValueKey('window-entrance')),
+          )
+          .first,
+    );
+    // The x basis is the genie's horizontal squeeze; getMaxScaleOnAxis also
+    // counts the untouched z axis (1.0), so read the actual column.
+    expect(restoredTransform.transform.storage[0], lessThan(0.9));
+
     await _settle(tester);
     expect(find.byKey(const ValueKey('tasks-input')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -204,7 +238,14 @@ void main() {
 
     final maximized = tester.getSize(find.byKey(const ValueKey('window-1')));
     expect(maximized.width, greaterThan(before.width + 200));
-    expect(maximized.width, 1483);
+    // 5 px from the free edges, 5 px below the waybar, 5 px from the dock:
+    // 1600 - 5 (left) - 82 (dock 72 + 5 margin + 5 gap) = 1513.
+    expect(maximized.width, 1513);
+    final rect = tester.getRect(find.byKey(const ValueKey('window-1')));
+    expect(rect.left, 5);
+    expect(rect.top, 65);
+    expect(rect.right, closeTo(1600 - 82, 0.01));
+    expect(rect.bottom, closeTo(900 - 5, 0.01));
 
     await tester.tap(find.text('Tasks'));
     await tester.pump(const Duration(milliseconds: 80));
@@ -230,11 +271,12 @@ void main() {
   testWidgets('the settings window opens inside the shell', (tester) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
+    // The Bluetooth waybar button still opens Settings at that pane; the
+    // Wi-Fi button now opens its own flyout instead (see below).
+    await tester.tap(find.byKey(const ValueKey('topbar-bluetooth')));
     await _settle(tester);
 
-    expect(find.byKey(const ValueKey('settings-row-wifi')), findsOneWidget);
-    expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('settings-row-bluetooth')), findsOneWidget);
     expect(find.byKey(const ValueKey('dock-settings')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -407,6 +449,159 @@ void main() {
     await _settle(tester);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('the desktops button is vertically centred in the dock',
+      (tester) async {
+    await _pumpShell(tester);
+    final dots = tester.getCenter(find.byKey(const ValueKey('desktop-dots')));
+    final dock = tester.getRect(find.byKey(const ValueKey('dock')));
+    expect((dots.dy - dock.center.dy).abs(), lessThan(1.0));
+    expect((dots.dx - dock.center.dx).abs(), lessThan(1.0));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the wifi waybar button opens its own network flyout',
+      (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('wifi-flyout')), findsOneWidget);
+    expect(find.text('Networks'), findsOneWidget);
+
+    final search = find.descendant(
+      of: find.byKey(const ValueKey('wifi-flyout')),
+      matching: find.byIcon(Icons.search_rounded),
+    );
+    await tester.tap(search);
+    await _settle(tester);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('wifi-flyout')),
+        matching: find.byType(TextField),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a close keeps the window visible for most of its exit',
+      (tester) async {
+    await _pumpShell(tester);
+    await _openApp(tester, 'calculator');
+
+    await tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('window-1')),
+      matching: find.byKey(const ValueKey('window-close')),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 180));
+    // 180 ms into a 320 ms exit: still on screen.
+    expect(find.byKey(const ValueKey('calc-display')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 220));
+    // The completion schedules the manager's removal for the next frame.
+    await tester.pump();
+    expect(find.byKey(const ValueKey('calc-display')), findsNothing);
+    // Let the dock icon's own 210 ms exit timer finish before teardown.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the player banner blurs its artwork', (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('mini-player')));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('player-flyout')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('player-flyout')),
+        matching: find.byType(ImageFiltered),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('launcher tiles do not paint a dark hover wash', (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
+    await _settle(tester);
+
+    final tile = find.byKey(const ValueKey('launcher-app-calculator'));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    await gesture.moveTo(tester.getCenter(tile));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      find.descendant(of: tile, matching: find.byType(AnimatedContainer)),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+    await gesture.removePointer();
+  });
+
+  testWidgets('the wifi flyout expands the connect card for each network',
+      (tester) async {
+    await _pumpShell(
+      tester,
+      wifiNetworks: [
+        WifiNetwork(
+          ssid: 'Home',
+          signal: 80,
+          secure: true,
+          known: true,
+          connected: false,
+          auto: true,
+        ),
+        WifiNetwork(
+          ssid: 'Cafe',
+          signal: 30,
+          secure: false,
+          known: false,
+          connected: false,
+          auto: false,
+        ),
+        WifiNetwork(
+          ssid: 'Phone',
+          signal: 60,
+          secure: true,
+          known: true,
+          connected: true,
+          auto: true,
+        ),
+      ],
+    );
+    await tester.tap(find.byKey(const ValueKey('topbar-wifi')));
+    await _settle(tester);
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Cafe'), findsOneWidget);
+    expect(find.text('Connected'), findsOneWidget);
+    // Locked Home and Phone, open Cafe.
+    expect(find.byIcon(Icons.lock_rounded), findsNWidgets(2));
+    expect(find.byIcon(Icons.lock_open_rounded), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('wifi-row-Home')));
+    await tester.tap(find.byKey(const ValueKey('wifi-row-Home')));
+    await _settle(tester);
+    expect(find.text('Enter password'), findsOneWidget);
+    expect(find.text('Connect automatically'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('wifi-row-Cafe')));
+    await tester.tap(find.byKey(const ValueKey('wifi-row-Cafe')));
+    await _settle(tester);
+    expect(find.text('Enter password'), findsNothing);
+    expect(find.text('Connect'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('wifi-row-Phone')));
+    await tester.tap(find.byKey(const ValueKey('wifi-row-Phone')));
+    await _settle(tester);
+    expect(find.text('Connected, pinned'), findsOneWidget);
+    expect(find.text('Disconnect'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 // ---- helpers -------------------------------------------------------------------
@@ -422,7 +617,19 @@ Future<void> _pumpShell(
   WidgetTester tester, {
   Size size = const Size(1600, 900),
   AudioEngine? audio,
+  List<WifiNetwork>? wifiNetworks,
 }) async {
+  // Hermetic prefs: the waybar list, slideshow and display choices of the
+  // machine running the tests must never leak into a shell test.
+  final prefsDir = Directory.systemTemp.createTempSync('expa_shell_');
+  ShellPrefs.setDirectory(prefsDir.path);
+  addTearDown(() {
+    ShellPrefs.setDirectory(null);
+    try {
+      prefsDir.deleteSync(recursive: true);
+    } catch (_) {}
+  });
+
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
@@ -432,6 +639,7 @@ Future<void> _pumpShell(
       radio: _FakeRadio(),
       sound: _FakeSound(),
       audio: audio ?? _FakeAudio(),
+      wifiNetworks: wifiNetworks,
     ),
   ));
   await _settle(tester);

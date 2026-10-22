@@ -32,5 +32,7 @@ build/
 ExDesktop/lib/rust/*.dll
 ExDesktop/lib/rust/music_scan/*.dll
 ExDesktop/lib/rust/music_scan/target/
+ExDesktop/lib/rust/sysctl/*.dll
+ExDesktop/lib/rust/sysctl/target/
 ExDesktop/lib/rust/target/
 docs/screenshot.png

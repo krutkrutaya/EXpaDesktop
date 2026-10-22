@@ -29,7 +29,7 @@ void runDesktopChecks() {
 
 void _catalog() {
   section('app catalog');
-  checkEquals('ten built-in apps', ShellApp.values.length, 10);
+  checkEquals('eleven built-in apps', ShellApp.values.length, 11);
   final ids = ShellApp.values.map((app) => app.id).toSet();
   checkEquals('ids are unique', ids.length, ShellApp.values.length);
   checkEquals('settings id', ShellApp.settings.id, 'settings');
@@ -189,11 +189,15 @@ void _maximize() {
   final w = wm.open(ShellApp.files, rect: [200, 140, 600, 400]);
 
   wm.toggleMaximize(w.id);
+  // Maximized fills the desktop: 5 px from the waybar above and the dock on
+  // the right, 5 px from the free left and bottom edges.
   check('maximized', w.maximized);
-  checkClose('maximized left', w.left, 24);
-  checkClose('maximized top', w.top, 78);
-  checkClose('maximized width', w.width, wm.area.usableWidth);
-  checkClose('maximized height', w.height, wm.area.usableHeight);
+  checkClose('maximized left', w.left, DesktopArea.maximizeInsetLeft);
+  checkClose('maximized top', w.top, DesktopArea.maximizeInsetTop);
+  checkEquals('maximized width', w.width,
+      wm.area.width - DesktopArea.maximizeInsetLeft - DesktopArea.maximizeInsetRight);
+  checkEquals('maximized height', w.height,
+      wm.area.height - DesktopArea.maximizeInsetTop - DesktopArea.maximizeInsetBottom);
   check('maximizing raises the window', wm.windows.last.id == w.id);
 
   wm.toggleMaximize(w.id);
@@ -267,9 +271,11 @@ void _retarget() {
 
   wm.retarget(const DesktopArea(1280, 720));
   check('windows stay inside after a shrink', wm.area.contains(a.rect));
-  check('a maximized window is re-fitted', wm.area.contains(b.rect));
-  checkClose('the maximized window tracks the area',
-      b.width, wm.area.usableWidth);
+  // A maximized window re-lands on the panel-gap maximize rect of the new area.
+  checkEquals('a maximized window is re-fitted',
+      b.left, DesktopArea.maximizeInsetLeft);
+  checkEquals('the maximized window tracks the area', b.width,
+      wm.area.width - DesktopArea.maximizeInsetLeft - DesktopArea.maximizeInsetRight);
 
   wm.retarget(const DesktopArea(1920, 1080));
   wm.toggleMaximize(b.id);

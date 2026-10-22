@@ -14,7 +14,8 @@ enum ShellApp {
   tasks('tasks', 'Tasks', 440, 540),
   browser('browser', 'Browser', 960, 640),
   musics('musics', 'Musics', 820, 540),
-  settings('settings', 'Settings', 920, 610),
+  configs('configs', 'Configs', 560, 520),
+  settings('settings', 'Settings', 1000, 680),
   terminal('terminal', 'Terminal', 700, 440);
 
   const ShellApp(this.id, this.title, this.width, this.height);

@@ -115,6 +115,16 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
 
+# The Rust system backend: audio sessions, Wi-Fi, display modes, time zones.
+# Optional like the other DLLs; the Dart fallbacks keep the shell usable.
+set(SYSCTL_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/sysctl/sysctl.dll")
+if(EXISTS "${SYSCTL_DLL}")
+  install(FILES "${SYSCTL_DLL}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+else()
+  message(STATUS "sysctl.dll not found - native audio/Wi-Fi/display backend disabled")
+endif()
+
 # The Rust music scanner is optional too: one native pass over the library
 # with cover extraction. Without it the Dart scanner is used.
 set(MUSIC_SCAN_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/music_scan/music_scan.dll")

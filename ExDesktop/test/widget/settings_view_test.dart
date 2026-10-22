@@ -1,40 +1,105 @@
 // Widget tests for the settings *content* (the window chrome is ShellWindow's
 // job and is tested separately).
 //
-// They answer what the mock suites cannot: does the pane build at a real size,
-// do the live controls show the state they are handed, and does a click reach
-// the backend? The backends are recorders, so no test touches the machine's
-// radios or mutes the speakers of whoever runs it.
-//
-// Run with: flutter test
+// They answer what the mock suites cannot: does every pane build at a real
+// size, do the live controls show the state they are handed, and does a click
+// reach the right callback? Radios, sound and sessions are recorders, so no
+// test touches the machine's radios or mutes the speakers of whoever runs it.
 
+import 'package:exp_desktop/audio_sessions.dart';
 import 'package:exp_desktop/desktop/apps/settings_view.dart';
+import 'package:exp_desktop/native/sysctl.dart';
 import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/sound_control.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-void main() {
-  testWidgets('opens on the sound pane with the live volume', (tester) async {
-    final sound = _FakeSound(volume: 0.4);
-    await _open(tester, section: 'sound', sound: sound);
+const _zones = [
+  TimezoneRow(
+    id: 'Europe/Moscow',
+    name: 'Moscow Standard Time',
+    offsetMinutes: 180,
+  ),
+  TimezoneRow(
+    id: 'Pacific Standard Time',
+    name: 'Pacific Standard Time',
+    offsetMinutes: -480,
+  ),
+];
 
-    expect(find.text('Sound settings'), findsNWidgets(2));
-    expect(find.text('Level'), findsOneWidget);
+const _displayState = DisplayState(
+  current: DisplayModeRow(
+    width: 1920,
+    height: 1080,
+    hz: 60,
+    orientation: 0,
+    bits: 32,
+  ),
+  resolutions: [
+    (width: 1920, height: 1080),
+    (width: 1280, height: 720),
+  ],
+  refreshRates: [60, 144],
+);
+
+const _soundDisplay = DisplaySettings(
+  brightness: 0.7,
+  contrast: 0.7,
+  warmth: 0,
+  onBrightness: _ignore,
+  onContrast: _ignore,
+  onWarmth: _ignore,
+);
+
+void _ignore(double _) {}
+
+void main() {
+  testWidgets('the sound pane leads with the master volume and the mute icon',
+      (tester) async {
+    final sound = _FakeSound(volume: 0.4);
+    await _open(
+      tester,
+      section: 'sound',
+      sound: sound,
+      audioSessions: const [],
+    );
+
+    // The pane title and the nav row both read "Sound".
+    expect(find.text('Sound'), findsNWidgets(2));
     expect(find.text('40%'), findsOneWidget);
-    expect(find.text('Volume 40%'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-master-volume')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-sound-mute')), findsOneWidget);
+    // No old "Level" row and no full-width toggle.
+    expect(find.text('Level'), findsNothing);
+    expect(find.byType(GlassToggle), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('settings-sound-mute')));
+    await tester.pump();
+    expect(sound.muted, isTrue);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the sound switch mutes through the backend', (tester) async {
-    final sound = _FakeSound(volume: 0.4);
-    await _open(tester, section: 'sound', sound: sound);
+  testWidgets('the sound pane lists every app session with its own slider',
+      (tester) async {
+    final sessions = [
+      AudioAppSession(pid: 990001, exe: 'spotify', volume: 0.5, muted: false),
+      AudioAppSession(pid: 990002, exe: 'chrome', volume: 0.9, muted: false),
+    ];
+    await _open(
+      tester,
+      section: 'sound',
+      sound: _FakeSound(volume: 0.4),
+      audioSessions: sessions,
+    );
 
-    await tester.tap(find.byType(GlassToggle));
+    expect(find.byKey(const ValueKey('settings-audio-990001')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-audio-990002')), findsOneWidget);
+    expect(find.text('Spotify'), findsOneWidget);
+    expect(find.text('Chrome'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-audio-mute-990001')));
     await tester.pump();
-
-    expect(sound.muted, isTrue);
-    expect(find.text('Sound muted'), findsOneWidget);
+    expect(sessions.first.muted, isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -56,7 +121,7 @@ void main() {
     expect(find.text('Test Wi-Fi'), findsOneWidget);
 
     await tester.tap(find.byType(GlassToggle));
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
     expect(radio.calls, [(RadioKind.wifi, false)]);
     expect(find.text('Off'), findsOneWidget);
@@ -87,11 +152,11 @@ void main() {
     );
   });
 
-  testWidgets('rows the shell does not own keep their Windows link',
+  testWidgets('a Windows-owned row offers its real Settings page',
       (tester) async {
-    await _open(tester, section: 'appearance');
+    await _open(tester, section: 'defaultapps');
 
-    expect(find.text('Open in Windows Settings'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-open-windows')), findsOneWidget);
     expect(find.textContaining('lives in Windows Settings'), findsOneWidget);
   });
 
@@ -100,48 +165,244 @@ void main() {
     expect(find.text('Select a section on the left'), findsOneWidget);
   });
 
-  testWidgets('the list carries every section title', (tester) async {
+  testWidgets('the list carries the new sections, not the old rows',
+      (tester) async {
     await _open(tester);
 
     for (final title in [
       'Input & output',
-      'Desktop',
       'Connected devices',
       'Network & connectivity',
     ]) {
       expect(find.text(title), findsOneWidget);
     }
+    // The section header and its single row both read "Appearance".
+    expect(find.text('Appearance'), findsNWidgets(2));
+    // The separate Desktop/Wallpaper row and the Windows Update security
+    // row are gone by request.
+    expect(find.byKey(const ValueKey('settings-row-wallpaper')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-row-update')), findsNothing);
+    expect(find.text('Desktop'), findsNothing);
 
     await tester.scrollUntilVisible(
-      find.text('Security & privacy'),
+      find.byKey(const ValueKey('settings-row-updates')),
       120,
       scrollable: find.descendant(
         of: find.byKey(const ValueKey('settings-nav')),
         matching: find.byType(Scrollable),
       ),
     );
-    expect(find.text('Security & privacy'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-row-updates')), findsOneWidget);
+    expect(find.text('Updates'), findsWidgets);
   });
 
   testWidgets('the navigator can retarget the pane', (tester) async {
     final sound = _FakeSound(volume: 0.5);
     final navigator = SettingsNavigator()..show('sound');
     await _open(tester, section: 'sound', sound: sound, navigator: navigator);
-    expect(find.text('Level'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-master-volume')), findsOneWidget);
 
     navigator.show('wifi');
-    await tester.pumpAndSettle();
+    await _settle(tester);
 
-    expect(find.text('Level'), findsNothing);
+    expect(find.byKey(const ValueKey('settings-master-volume')), findsNothing);
     expect(find.text('Wi-Fi & internet'), findsNWidgets(2));
   });
 
-  testWidgets('tapping a row opens that pane', (tester) async {
-    await _open(tester);
-    await tester.tap(find.byKey(const ValueKey('settings-row-display')));
+  testWidgets('the display pane reads the real modes and applies a choice',
+      (tester) async {
+    String? chosenRes;
+    String? chosenOrient;
+    String? chosenHz;
+    await _open(
+      tester,
+      section: 'display',
+      displayState: _displayState,
+      onDisplayRes: (value) => chosenRes = value,
+      onDisplayOrient: (value) => chosenOrient = value,
+      onDisplayHz: (value) => chosenHz = value,
+    );
+
+    expect(find.textContaining('1920 × 1080'), findsWidgets);
+    expect(find.byKey(const ValueKey('settings-display-res')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-display-orient')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-display-hz')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-display-res')));
+    await _settle(tester);
+    await tester.tap(find.text('1280 × 720').last);
+    await _settle(tester);
+    expect(chosenRes, '1280x720');
+
+    await tester.tap(find.byKey(const ValueKey('settings-display-orient')));
+    await _settle(tester);
+    await tester.tap(find.text('Portrait').last);
+    await _settle(tester);
+    expect(chosenOrient, '1');
+
+    await tester.tap(find.byKey(const ValueKey('settings-display-hz')));
+    await _settle(tester);
+    await tester.tap(find.text('144 Hz').last);
+    await _settle(tester);
+    expect(chosenHz, '144');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('appearance shows two large tiles and a back button per sheet',
+      (tester) async {
+    await _open(tester, section: 'appearance');
+
+    final tile = find.byKey(const ValueKey('appearance-tile-wallpaper'));
+    expect(tile, findsOneWidget);
+    expect(find.byKey(const ValueKey('appearance-tile-vibe')), findsOneWidget);
+    expect(tester.getSize(tile).width, greaterThan(250));
+    expect(tester.getSize(tile).height, greaterThan(80));
+
+    await tester.tap(tile);
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('appearance-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('slideshow-switch')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('appearance-back')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('appearance-tile-wallpaper')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the wallpaper sheet applies a picture and the timer',
+      (tester) async {
+    final applied = <int>[];
+    bool? slideshowOn;
+    int? slideshowPeriod;
+    await _open(
+      tester,
+      section: 'appearance',
+      wallpapers: const [
+        'assets/fons/fon1.jpg',
+        'assets/fons/fon2.jpg',
+      ],
+      activeWallpaper: 0,
+      onWallpaper: applied.add,
+      slideshowOn: true,
+      slideshowPeriod: 12,
+      onSlideshow: (on, period) {
+        slideshowOn = on;
+        slideshowPeriod = period;
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('appearance-tile-wallpaper')));
     await _settle(tester);
 
-    expect(find.text('Brightness'), findsOneWidget);
+    expect(find.textContaining('Each desktop keeps its own wallpaper'),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings-wallpaper-1')));
+    await tester.pump();
+    expect(applied, [1]);
+
+    await tester.enterText(
+        find.byKey(const ValueKey('slideshow-period')), '30');
+    await tester.tap(find.byKey(const ValueKey('slideshow-apply')));
+    await tester.pump();
+    expect(slideshowOn, isTrue);
+    expect(slideshowPeriod, 30);
+
+    await tester.tap(find.byKey(const ValueKey('slideshow-switch')));
+    await tester.pump();
+    expect(slideshowOn, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the vibe sheet removes and adds waybar panels', (tester) async {
+    List<String>? items;
+    await _open(
+      tester,
+      section: 'appearance',
+      waybarItems: const ['sound', 'bluetooth', 'wifi', 'brightness'],
+      onWaybarItems: (next) => items = next,
+    );
+    await tester.tap(find.byKey(const ValueKey('appearance-tile-vibe')));
+    await _settle(tester);
+
+    expect(find.byKey(const ValueKey('waybar-item-sound')), findsOneWidget);
+    expect(find.byKey(const ValueKey('waybar-item-brightness')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('waybar-remove-sound')));
+    await tester.pump();
+    expect(items, isNot(contains('sound')));
+    expect(items, containsAll(['bluetooth', 'wifi', 'brightness']));
+
+    await tester.tap(find.byKey(const ValueKey('waybar-add')));
+    await _settle(tester);
+    await tester.tap(find.text('Clipboard').last);
+    await _settle(tester);
+    expect(items, contains('clipboard'));
+
+    await tester.tap(find.byKey(const ValueKey('appearance-back')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('appearance-tile-vibe')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the date pane picks a time zone, auto mode and a region',
+      (tester) async {
+    String? zone;
+    bool? autoValue;
+    String? region;
+    await _open(
+      tester,
+      section: 'datetime',
+      timezones: _zones,
+      tzZone: 'Europe/Moscow',
+      tzAuto: false,
+      region: 'ru-RU',
+      onTimezone: (value, {required bool auto}) {
+        zone = value;
+        autoValue = auto;
+      },
+      onRegion: (value) => region = value,
+    );
+
+    expect(find.text('Moscow Standard Time'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-tz-zone')));
+    await _settle(tester);
+    await tester.tap(find.text('Pacific Standard Time').last);
+    await _settle(tester);
+    expect(zone, 'Pacific Standard Time');
+    expect(autoValue, isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('settings-tz-auto')));
+    await tester.pump();
+    expect(autoValue, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('settings-region')));
+    await _settle(tester);
+    await tester.tap(find.text('United States — en-US').last);
+    await _settle(tester);
+    expect(region, 'en-US');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('updates are at the bottom and open the right pages',
+      (tester) async {
+    final opened = <String>[];
+    await _open(
+      tester,
+      section: 'updates',
+      onOpenUpdates: (uri) async => opened.add(uri),
+    );
+
+    expect(find.byKey(const ValueKey('updates-expa')), findsOneWidget);
+    expect(find.byKey(const ValueKey('updates-windows')), findsOneWidget);
+
+    await tester.tap(find.text('Check'));
+    await tester.pump();
+    expect(opened.single, contains('github.com/krutkrutaya/EXpaDesktop'));
+
+    await tester.tap(find.text('Open'));
+    await tester.pump();
+    expect(opened.last, 'ms-settings:windowsupdate');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the content survives a small window', (tester) async {
@@ -149,61 +410,9 @@ void main() {
       tester,
       section: 'sound',
       sound: _FakeSound(),
-      size: const Size(1024, 700),
+      audioSessions: const [],
+      hostSize: const Size(760, 520),
     );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the display pane shows the real values, not made-up defaults',
-      (tester) async {
-    final applied = <String, double>{};
-    final display = DisplaySettings(
-      brightness: 0.42,
-      contrast: 0.6,
-      warmth: 0.0,
-      onBrightness: (v) => applied['brightness'] = v,
-      onContrast: (v) => applied['contrast'] = v,
-      onWarmth: (v) => applied['warmth'] = v,
-    );
-
-    await _open(tester, section: 'display', display: display);
-
-    expect(find.text('Brightness'), findsOneWidget);
-    expect(find.text('Contrast'), findsOneWidget);
-    expect(find.text('Warmth'), findsOneWidget);
-
-    // The numbers have to be the live ones: warmth 0 is a neutral screen,
-    // and showing 50% there was the bug.
-    expect(find.text('42%'), findsOneWidget);
-    expect(find.text('60%'), findsOneWidget);
-    expect(find.text('0%'), findsOneWidget);
-    expect(applied, isEmpty);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('the wallpaper pane lists the wallpapers and applies one',
-      (tester) async {
-    final applied = <int>[];
-    await _open(
-      tester,
-      section: 'wallpaper',
-      wallpapers: const [
-        'assets/fons/fon1.jpg',
-        'assets/fons/fon2.jpg',
-        'assets/fons/fon3.jpg',
-      ],
-      activeWallpaper: 1,
-      onWallpaper: applied.add,
-    );
-
-    expect(find.textContaining('Each desktop keeps its own wallpaper'),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('settings-wallpaper-0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings-wallpaper-2')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('settings-wallpaper-2')));
-    await tester.pump();
-    expect(applied, [2]);
     expect(tester.takeException(), isNull);
   });
 }
@@ -219,6 +428,26 @@ Widget _settings({
   List<String> wallpapers = const [],
   int activeWallpaper = 0,
   ValueChanged<int>? onWallpaper,
+  bool slideshowOn = true,
+  int slideshowPeriod = 12,
+  void Function(bool, int)? onSlideshow,
+  List<String> waybarItems = const ['sound', 'bluetooth', 'wifi', 'brightness'],
+  ValueChanged<List<String>>? onWaybarItems,
+  String tzZone = '',
+  bool tzAuto = false,
+  String region = 'ru-RU',
+  void Function(String, {required bool auto})? onTimezone,
+  ValueChanged<String>? onRegion,
+  String displayRes = 'auto',
+  String displayOrient = 'auto',
+  String displayHz = 'auto',
+  ValueChanged<String>? onDisplayRes,
+  ValueChanged<String>? onDisplayOrient,
+  ValueChanged<String>? onDisplayHz,
+  Future<void> Function(String)? onOpenUpdates,
+  DisplayState? displayState,
+  List<TimezoneRow>? timezones,
+  List<AudioAppSession>? audioSessions,
 }) {
   final nav = navigator ?? SettingsNavigator();
   if (navigator == null) nav.show(section);
@@ -229,22 +458,38 @@ Widget _settings({
     wallpapers: wallpapers,
     activeWallpaper: activeWallpaper,
     onWallpaper: onWallpaper,
-    display: display ??
-        DisplaySettings(
-          brightness: 0.7,
-          contrast: 0.7,
-          warmth: 0,
-          onBrightness: (_) {},
-          onContrast: (_) {},
-          onWarmth: (_) {},
-        ),
+    display: display ?? _soundDisplay,
+    slideshowOn: slideshowOn,
+    slideshowPeriod: slideshowPeriod,
+    onSlideshow: onSlideshow,
+    waybarItems: waybarItems,
+    onWaybarItems: onWaybarItems,
+    tzZone: tzZone,
+    tzAuto: tzAuto,
+    region: region,
+    onTimezone: onTimezone,
+    onRegion: onRegion,
+    displayRes: displayRes,
+    displayOrient: displayOrient,
+    displayHz: displayHz,
+    onDisplayRes: onDisplayRes,
+    onDisplayOrient: onDisplayOrient,
+    onDisplayHz: onDisplayHz,
+    onOpenUpdates: onOpenUpdates,
+    displayState: displayState,
+    timezones: timezones,
+    audioSessions: audioSessions,
   );
 }
 
-Widget _host(Widget child) => MaterialApp(
+Widget _host(Widget child, Size size) => MaterialApp(
       home: Scaffold(
         body: Center(
-          child: SizedBox(width: 920, height: 610, child: child),
+          child: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: child,
+          ),
         ),
       ),
     );
@@ -259,29 +504,72 @@ Future<void> _open(
   List<String> wallpapers = const [],
   int activeWallpaper = 0,
   ValueChanged<int>? onWallpaper,
-  Size size = const Size(1280, 800),
+  bool slideshowOn = true,
+  int slideshowPeriod = 12,
+  void Function(bool, int)? onSlideshow,
+  List<String> waybarItems = const ['sound', 'bluetooth', 'wifi', 'brightness'],
+  ValueChanged<List<String>>? onWaybarItems,
+  String tzZone = '',
+  bool tzAuto = false,
+  String region = 'ru-RU',
+  void Function(String, {required bool auto})? onTimezone,
+  ValueChanged<String>? onRegion,
+  String displayRes = 'auto',
+  String displayOrient = 'auto',
+  String displayHz = 'auto',
+  ValueChanged<String>? onDisplayRes,
+  ValueChanged<String>? onDisplayOrient,
+  ValueChanged<String>? onDisplayHz,
+  Future<void> Function(String)? onOpenUpdates,
+  DisplayState? displayState,
+  List<TimezoneRow>? timezones,
+  List<AudioAppSession>? audioSessions,
+  Size hostSize = const Size(960, 640),
 }) async {
-  tester.view.physicalSize = size;
+  tester.view.physicalSize = const Size(1280, 800);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(_host(_settings(
-    navigator: navigator,
-    section: section,
-    radio: radio,
-    sound: sound,
-    display: display,
-    wallpapers: wallpapers,
-    activeWallpaper: activeWallpaper,
-    onWallpaper: onWallpaper,
-  )));
+  await tester.pumpWidget(_host(
+    _settings(
+      navigator: navigator,
+      section: section,
+      radio: radio,
+      sound: sound,
+      display: display,
+      wallpapers: wallpapers,
+      activeWallpaper: activeWallpaper,
+      onWallpaper: onWallpaper,
+      slideshowOn: slideshowOn,
+      slideshowPeriod: slideshowPeriod,
+      onSlideshow: onSlideshow,
+      waybarItems: waybarItems,
+      onWaybarItems: onWaybarItems,
+      tzZone: tzZone,
+      tzAuto: tzAuto,
+      region: region,
+      onTimezone: onTimezone,
+      onRegion: onRegion,
+      displayRes: displayRes,
+      displayOrient: displayOrient,
+      displayHz: displayHz,
+      onDisplayRes: onDisplayRes,
+      onDisplayOrient: onDisplayOrient,
+      onDisplayHz: onDisplayHz,
+      onOpenUpdates: onOpenUpdates,
+      displayState: displayState,
+      timezones: timezones,
+      audioSessions: audioSessions,
+    ),
+    hostSize,
+  ));
   await _settle(tester);
 }
 
-/// Fixed frames instead of `pumpAndSettle`: the WaveSlider's ticker never
-/// stops, so settling would hang.
+/// Fixed frames instead of `pumpAndSettle`: the shell's animations and the
+/// wave sliders are better sampled deterministically.
 Future<void> _settle(WidgetTester tester) async {
-  for (var i = 0; i < 30; i++) {
+  for (var i = 0; i < 40; i++) {
     await tester.pump(const Duration(milliseconds: 16));
   }
 }

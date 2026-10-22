@@ -13,6 +13,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:exp_desktop/desktop/window_manager.dart' show DesktopArea;
 import 'package:exp_desktop/id3_art.dart';
 import 'package:exp_desktop/shell_layout.dart';
 import 'package:exp_desktop/shell_panels.dart';
@@ -61,10 +62,14 @@ void testLayoutNumbers() {
           !ShellLayout.overlaps(rect, layout.dockRect));
     }
 
-    // The sound flyout is the one that used to slide under the dock.
+    // The sound flyout sits under the waybar and ends before the dock starts.
     check(
       '$label: the sound flyout ends before the dock starts',
       layout.volumeRect[0] + layout.volumeRect[2] <= layout.dockLeft,
+    );
+    check(
+      '$label: the sound flyout hangs under the waybar',
+      layout.volumeRect[1] >= ShellLayout.waybarHeight,
     );
 
     // The four-dot desktop button sits inside the dock too.
@@ -75,12 +80,20 @@ void testLayoutNumbers() {
           dotsCentre <= layout.width - ShellLayout.dockMargin,
     );
 
-    // The sound drop has to fly *into* the dock, not sit next to it.
-    final dropCentre = layout.volumeButton[0] + layout.volumeButton[2] / 2;
+    // The sound button has moved into the waybar's right group; the drop
+    // flies out of that button now, not out of the dock.
+    final soundCentre = layout.volumeButton[0] + layout.volumeButton[2] / 2;
     check(
-      '$label: the sound drop lands inside the dock',
-      dropCentre >= layout.dockLeft &&
-          dropCentre <= layout.width - ShellLayout.dockMargin,
+      '$label: the sound button sits inside the waybar',
+      soundCentre >= layout.waybarRect[0] &&
+          soundCentre <= layout.waybarRect[0] + ShellLayout.waybarWidth &&
+          layout.volumeButton[1] >= 0 &&
+          layout.volumeButton[1] + layout.volumeButton[3] <=
+              ShellLayout.waybarHeight,
+    );
+    check(
+      '$label: the sound panel is under its button',
+      layout.volumeRect[1] >= layout.volumeButton[1],
     );
 
     // The launcher is a small landscape menu in the middle, not a tall column.
@@ -141,6 +154,51 @@ void testLayoutNumbers() {
       small.fitsOnScreen(small.desktopsRect));
   check('800x600: the player stays on screen',
       small.fitsOnScreen(small.playerRect));
+
+  // ---- the Vibe bar's data model ------------------------------------------
+  section('[waybar items]');
+  final defaults = List<String>.from(ShellLayout.waybarRightItems);
+  try {
+    check('brightness is a waybar item', defaults.contains('brightness'));
+    check('brightness is not painted on the right',
+        !ShellLayout.visibleRightItems.contains('brightness'));
+    const layout = ShellLayout(1600, 900);
+    checkEquals('wifi is the rightmost right-side button',
+        layout.rightIndexOf('wifi'), 0);
+    checkEquals(
+        'sound is one to the left', layout.rightIndexOf('sound'), 1);
+    checkEquals('bluetooth is two to the left',
+        layout.rightIndexOf('bluetooth'), 2);
+    checkEquals('brightness is not in the right row',
+        layout.rightIndexOf('brightness'), -1);
+    checkClose('the base bar is 700 wide', ShellLayout.waybarWidth, 700, 0.01);
+
+    ShellLayout.waybarRightItems = [...defaults, 'clipboard'];
+    checkClose('an extra panel widens the bar', ShellLayout.waybarWidth, 744,
+        0.01);
+    ShellLayout.waybarRightItems = [...defaults, 'clipboard', 'calendar'];
+    checkClose('two extras widen by two pitches', ShellLayout.waybarWidth, 788,
+        0.01);
+
+    // The four-squares button lives left of the bar's centre, beside the
+    // mini player; the desktops button is dead centre of the dock.
+    check('the programs button is left of the centre',
+        layout.appsButton[0] + layout.appsButton[2] / 2 < 800);
+    checkClose('the desktops button is vertically centred',
+        layout.desktopsButton[1] + layout.desktopsButton[3] / 2, 450, 0.01);
+
+    // Maximize leaves 5 px from the free edges and below the waybar/dock.
+    const area = DesktopArea(1600, 900);
+    final max = area.maximizeRect;
+    checkClose('maximize left inset', max[0], 5, 0.01);
+    checkClose('maximize top inset', max[1], 65, 0.01);
+    checkClose('maximize width', max[2], 1513, 0.01);
+    checkClose('maximize height', max[3], 830, 0.01);
+    checkClose('maximize right edge', max[0] + max[2], 1518, 0.01);
+    checkClose('maximize bottom edge', max[1] + max[3], 895, 0.01);
+  } finally {
+    ShellLayout.waybarRightItems = defaults;
+  }
 }
 
 // ---- which surface may share the screen ----------------------------------------
@@ -148,20 +206,22 @@ void testLayoutNumbers() {
 void testPanelPolicy() {
   section('[panel policy]');
 
-  // The settings window is an app window now, not a panel.
-  checkEquals('six floating surfaces', ShellPanel.values.length, 6);
-  check('settings is not a panel',
-      ShellPanel.values.every((panel) => panel.name != 'settings'));
-  checkEquals('two centred surfaces', PanelPolicy.centred.length, 2);
+  // Power, launcher, apps, brightness, volume, wifi, player, desktops.
+  checkEquals('eight floating surfaces', ShellPanel.values.length, 8);
+  check('wifi is its own flyout', ShellPanel.wifi.isFlyout);
   check('the launcher is centred', ShellPanel.launcher.isCentred);
-  check('the power menu is centred', ShellPanel.menu.isCentred);
   check('the player is a flyout', !ShellPanel.player.isCentred);
   check('the desktops panel is a flyout', !ShellPanel.desktops.isCentred);
+
+  // Opening the power menu keeps everything where it is: it is a small
+  // dropdown above the launcher's own power button.
+  final power = PanelPolicy.plan(ShellPanel.power);
+  checkEquals('power closes nothing', power.toClose.length, 0);
 
   // Opening the launcher clears the middle and the top edge.
   final launcher = PanelPolicy.plan(ShellPanel.launcher);
   check('launcher closes the power menu',
-      launcher.toClose.contains(ShellPanel.menu));
+      launcher.toClose.contains(ShellPanel.power));
   for (final flyout in PanelPolicy.flyouts) {
     check('launcher closes ${flyout.name}',
         launcher.toClose.contains(flyout));
@@ -169,18 +229,13 @@ void testPanelPolicy() {
   check('launcher does not close itself',
       !launcher.toClose.contains(ShellPanel.launcher));
 
-  // The power menu behaves like the launcher.
-  final menu = PanelPolicy.plan(ShellPanel.menu);
-  check('menu closes the launcher', menu.toClose.contains(ShellPanel.launcher));
-  check('menu closes the player', menu.toClose.contains(ShellPanel.player));
-
-  // A flyout closes the other flyouts and both centred surfaces.
+  // A flyout closes the launcher and the power menu.
   for (final flyout in PanelPolicy.flyouts) {
     final plan = PanelPolicy.plan(flyout);
     check('${flyout.name}: closes the launcher',
         plan.toClose.contains(ShellPanel.launcher));
     check('${flyout.name}: closes the power menu',
-        plan.toClose.contains(ShellPanel.menu));
+        plan.toClose.contains(ShellPanel.power));
     for (final other in PanelPolicy.flyouts) {
       if (other == flyout) continue;
       check('${flyout.name}: closes ${other.name}',
@@ -195,7 +250,6 @@ void testPanelPolicy() {
         !plan.toClose.contains(panel));
     check('${panel.name}: closes only once',
         plan.toClose.toSet().length == plan.toClose.length);
-    check('${panel.name}: has work to do', plan.toClose.isNotEmpty);
   }
 
   // Opening a panel twice must still be idempotent: the same plan either time.

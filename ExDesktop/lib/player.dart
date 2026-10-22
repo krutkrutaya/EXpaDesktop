@@ -8,9 +8,11 @@
 // longer rebuilds when a track plays.
 
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'i18n.dart';
 import 'liquid_glass/stretch_icon_button.dart';
 import 'liquid_glass/wave_slider.dart';
 import 'playback/player_controller.dart';
@@ -95,13 +97,16 @@ class _PlayerPanelState extends State<PlayerPanel> {
         border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        // 9 px top/bottom instead of 10: the schedule of fixed heights in
+        // this column was 1 px short, which spilled the SeekRow over the
+        // panel's bottom edge.
+        padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
         child: Column(
           children: [
             _banner(track),
             const SizedBox(height: 7),
             Text(
-              track?.title ?? 'Nothing playing',
+              track?.title ?? Loc.t('Nothing playing', 'Ничего играет'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -111,7 +116,7 @@ class _PlayerPanelState extends State<PlayerPanel> {
               ),
             ),
             Text(
-              track?.artist ?? 'Pick a track',
+              track?.artist ?? Loc.t('Pick a track', 'Выбери трек'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white54, fontSize: 10),
@@ -123,7 +128,7 @@ class _PlayerPanelState extends State<PlayerPanel> {
             const SizedBox(height: 8),
             _GlassPillButton(
               key: const ValueKey('player-tracks'),
-              label: 'Tracks',
+              label: Loc.t('Tracks', 'Треки'),
               onTap: widget.onOpenTracks,
             ),
           ],
@@ -132,27 +137,25 @@ class _PlayerPanelState extends State<PlayerPanel> {
     );
   }
 
+  /// The now-playing banner: blurred cover behind, square rounded avatar in
+  /// the middle. The avatar grows a little while the mouse hovers it.
   Widget _banner(Track? track) {
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      height: 150,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Colors.white.withValues(alpha: 0.04),
-      ),
+      height: 200,
       child: Stack(
         fit: StackFit.expand,
         children: [
+          // Background: the cover stretched over the whole banner and blurred,
+          // so the text below stays readable and the banner looks deeper.
           ClipRRect(
             borderRadius: BorderRadius.circular(18),
-            child: TrackArt(
+            child: _BannerBackdrop(
               cover: track?.coverIn(_player.covers),
               avatar: track?.avatar,
-              size: 150,
-              borderRadius: BorderRadius.circular(18),
             ),
           ),
-          // A soft dark veil keeps the title readable over bright covers.
+          // A soft dark veil for contrast over bright covers.
           IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -166,6 +169,14 @@ class _PlayerPanelState extends State<PlayerPanel> {
                   ],
                 ),
               ),
+            ),
+          ),
+          // The avatar itself: square with 15 px rounding, no blur, and it
+          // swells slightly on hover.
+          Center(
+            child: _BannerAvatar(
+              cover: track?.coverIn(_player.covers),
+              avatar: track?.avatar,
             ),
           ),
         ],
@@ -434,6 +445,116 @@ class _GlassPillButtonState extends State<_GlassPillButton> {
               widget.label,
               style: const TextStyle(color: Colors.white, fontSize: 12.5),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+/// The blurred background of the banner: the cover stretched edge to edge,
+/// then a real gaussian blur (sigma 24). Without art it falls back to the
+/// glass-style gradient.
+class _BannerBackdrop extends StatelessWidget {
+  final Uint8List? cover;
+
+  /// The bundled asset path from the track table, if any.
+  final String? avatar;
+
+  const _BannerBackdrop({required this.cover, required this.avatar});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget? art;
+    final bytes = cover;
+    if (bytes != null && bytes.isNotEmpty) {
+      art = Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, _, __) => const SizedBox.shrink(),
+      );
+    } else if (avatar != null && avatar!.isNotEmpty) {
+      art = Image.asset(
+        avatar!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, _, __) => const SizedBox.shrink(),
+      );
+    }
+    // Blur the artwork itself. A BackdropFilter here looked at the layer
+    // behind the banner instead of the sibling image, so the cover stayed
+    // sharp; ImageFiltered always blurs exactly the pixels it wraps.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (art != null)
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 42, sigmaY: 42),
+            child: art,
+          ),
+        const Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0x29FFFFFF),
+                  Color(0x4D000000),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The square avatar over the banner: rounded 15, no blur, scales up a bit
+/// when the mouse hovers it.
+class _BannerAvatar extends StatefulWidget {
+  final Uint8List? cover;
+  final String? avatar;
+
+  const _BannerAvatar({required this.cover, required this.avatar});
+
+  @override
+  State<_BannerAvatar> createState() => _BannerAvatarState();
+}
+
+class _BannerAvatarState extends State<_BannerAvatar> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        scale: _hovered ? 1.07 : 1.0,
+        child: Container(
+          width: 122,
+          height: 122,
+          decoration: BoxDecoration(
+            color: Colors.black38,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 24,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: TrackArt(
+            cover: widget.cover,
+            avatar: widget.avatar,
+            size: 122,
+            borderRadius: BorderRadius.circular(15),
           ),
         ),
       ),

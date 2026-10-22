@@ -20,6 +20,12 @@ class MorphFrame {
   final double lens;
   final double glassOpacity;
   final double soften;
+
+  /// How visible the whole glass is for the fade: it rises fast at the very
+  /// start of the open (the panel appears almost at once) and falls only at
+  /// the very end of the close (the panel melts away last), unlike the item
+  /// opacity which follows the size.
+  final double reveal;
   final bool done;
 
   const MorphFrame({
@@ -30,6 +36,7 @@ class MorphFrame {
     required this.lens,
     required this.glassOpacity,
     required this.soften,
+    this.reveal = 1,
     required this.done,
   });
 
@@ -41,6 +48,7 @@ class MorphFrame {
     double? lens,
     double? glassOpacity,
     double? soften,
+    double? reveal,
     bool? done,
   }) {
     return MorphFrame(
@@ -51,6 +59,7 @@ class MorphFrame {
       lens: lens ?? this.lens,
       glassOpacity: glassOpacity ?? this.glassOpacity,
       soften: soften ?? this.soften,
+      reveal: reveal ?? this.reveal,
       done: done ?? this.done,
     );
   }
@@ -94,6 +103,9 @@ const double _capsulePush = 2.2;
 const double _roundTimeS = 0.1;
 // Glass opacity and softening come back to open values over this long.
 const double _revealS = 0.12;
+// The whole glass becomes visible this fast while opening, so a panel is
+// really there from the first frames instead of fading in over half a second.
+const double _glassShowS = 0.09;
 // The springs swing the drop past the menu; all of the swing is taken out as
 // it swells, so the grown glass sits exactly on the menu instead of drifting
 // in around it at the end.
@@ -209,6 +221,10 @@ class MenuMorphMotion {
   // Closing: how much of the glass's opacity is left before the capsule fade
   // even begins — the drop melts while it is still travelling back.
   double _travelFade = 1;
+  // Opening, the glass reveal starts here (0 for a fresh open, whatever a
+  // reversal left behind); closing, it is the value to keep until the last
+  // moment.
+  double _glassRevealFrom = 0;
   MorphFrame _frame = const MorphFrame(
     body: [0, 0, 0, 0],
     bodyRadius: 0,
@@ -238,6 +254,7 @@ class MenuMorphMotion {
                 lens: 1,
                 glassOpacity: 1,
                 soften: 0,
+                reveal: 0,
                 done: false,
               )
             : MorphFrame(
@@ -248,6 +265,7 @@ class MenuMorphMotion {
                 lens: 0,
                 glassOpacity: 1,
                 soften: 0,
+                reveal: 1,
                 done: false,
               ));
     _frame = start;
@@ -282,6 +300,7 @@ class MenuMorphMotion {
     _lensFrom = start.lens;
     _glassFrom = start.glassOpacity;
     _softenFrom = start.soften;
+    _glassRevealFrom = start.reveal;
     // A close that took over from a partially faded frame keeps on fading
     // from there instead of jumping back to opaque.
     if (!opening) _travelFade = _clamp01(start.glassOpacity);
@@ -431,6 +450,10 @@ class MenuMorphMotion {
       lens: _lensFrom * (1 - _clamp01(t / _lensS) * _clamp01(t / _lensS)),
       glassOpacity: _lerp(_glassFrom, 1, reveal),
       soften: _lerp(_softenFrom, 0, reveal),
+      // The glass shows up within the first ~0.1 s: the user reads the panel
+      // almost immediately instead of waiting out the whole flight.
+      reveal:
+          _lerp(_glassRevealFrom, 1, _easeOut(_clamp01(t / _glassShowS))),
       done: !moving && g >= _openSizeS,
     );
   }
@@ -505,10 +528,11 @@ class MenuMorphMotion {
       glassOpacity = capFade * _travelFade;
     } else {
       // The drop starts going transparent while it is still on its way back,
-      // so it melts away smoothly instead of blinking out at the very end.
+      // but only slightly now: the panel must stay readable and melt at the
+      // very end, not a third of the way home.
       _travelFade = math.min(
           _travelFade,
-          1 - 0.7 * _easeInOut(_clamp01(t / _arriveMaxS)));
+          1 - 0.25 * _easeInOut(_clamp01(t / _arriveMaxS)));
       glassOpacity = _travelFade;
     }
     // Measured from the furthest it got, so a menu that opened right below
@@ -523,6 +547,12 @@ class MenuMorphMotion {
             _clamp01(closeness),
             since >= 0 ? _clamp01(since / _softenS) : 0.0));
     final soften = _soften;
+    // The whole glass holds until the capsule fade is nearly over, then melts
+    // in the last ~0.1 s together with the travel fade. That is when the
+    // panel actually disappears from the screen.
+    final hideK = since >= 0
+        ? _easeInOut(_clamp01((since - (_fadeDelayS + _fadeS - 0.02)) / 0.10))
+        : 0.0;
     return MorphFrame(
       body: body,
       bodyRadius: bodyRadius,
@@ -532,6 +562,7 @@ class MenuMorphMotion {
       lens: _lerp(_lensFrom, 1, _easeOut(_clamp01(t / _lensS))),
       glassOpacity: glassOpacity,
       soften: soften,
+      reveal: _glassRevealFrom * (1 - hideK),
       done: glassOpacity == 0,
     );
   }

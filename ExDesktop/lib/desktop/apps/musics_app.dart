@@ -6,7 +6,11 @@
 // spinning belongs to the waybar art — it breathes with the beat instead.
 
 import 'package:flutter/foundation.dart';
+// The Musics app: covers, the track table, and transport for the controller.
+
 import 'package:flutter/material.dart';
+
+import '../../i18n.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../playback/beat.dart';
@@ -49,38 +53,54 @@ class MusicsApp extends StatelessWidget {
                     SizedBox(
                       width: 236,
                       child: Column(
+                        // Every child except the spacer is height-shy: wrap the
+                        // text block in a Flexible so a long artist line can't
+                        // push the transport bar out of the column bottom.
                         children: [
                           _PulseCover(
                             player: player,
                             playing: player.isPlaying,
-                            size: 196,
+                            // 184 instead of 196: with the 214 px column the
+                            // bigger cover overflowed the bottom by ~3.6 px.
+                            size: 184,
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            track?.title ?? 'Nothing playing',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
+                          // The now-playing block: title, artist, status.
+                          Flexible(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(height: 12),
+                                Text(
+                                  track?.title ??
+                                      Loc.t('Nothing playing', 'Ничего играет'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  track?.artist ??
+                                      Loc.t('Pick a track', 'Выбери трек'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Caption(
+                                  // Status caption: what the player is doing.
+                                  player.isPlaying
+                                      ? '${Loc.t('Playing', 'Играет')} · ${player.totalDuration}'
+                                      : Loc.t('Paused', 'Пауза'),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            track?.artist ?? 'Pick a track',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Caption(
-                            player.isPlaying
-                                ? 'Playing · ${player.totalDuration}'
-                                : 'Paused',
                           ),
                           const Spacer(),
                           _Transport(player: player),
@@ -93,13 +113,20 @@ class MusicsApp extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Row(
+                            // Header of the library panel. The PillButton's
+                            // label is shrink-safe: the texts give way first
+                            // instead of pushing the button out of the row.
                             children: [
-                              const Text(
-                                'Tracks',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
+                              Flexible(
+                                child: Text(
+                                  Loc.t('Tracks', 'Треки'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -107,7 +134,7 @@ class MusicsApp extends StatelessWidget {
                               const Spacer(),
                               PillButton(
                                 key: const ValueKey('musics-add'),
-                                label: 'Add track',
+                                label: Loc.t('Add track', 'Добавить трек'),
                                 icon: Icons.library_add_outlined,
                                 onTap: onAddTrack,
                               ),
@@ -273,7 +300,7 @@ class _TrackList extends StatelessWidget {
   Widget build(BuildContext context) {
     final tracks = player.tracks;
     if (tracks.isEmpty) {
-      return const Center(child: Caption('No tracks in assets/music yet'));
+      return Center(child: Caption(Loc.t('No tracks in assets/music yet', 'В библиотеке пока нет треков')));
     }
     return GlassPanel(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -389,20 +416,25 @@ class _TrackRowState extends State<_TrackRow> {
                 ),
               ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 30,
+              // Duration column. A fixed 30 px box overflowed on wide
+              // duration strings like "0:00:00"; the Flexible + FittedBox
+              // pair scales the text down instead of spilling past the edge.
+              Flexible(
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: widget.playing
                       ? const _Equalizer()
-                      : Text(
-                          widget.track.duration.isEmpty
-                              ? '${widget.index + 1}'
-                              : widget.track.duration,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 10.5,
+                      : FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            widget.track.duration.isEmpty
+                                ? '${widget.index + 1}'
+                                : widget.track.duration,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              color: Colors.white38,
+                              fontSize: 10.5,
+                            ),
                           ),
                         ),
                 ),
@@ -484,7 +516,7 @@ class _Transport extends StatelessWidget {
         HoverIcon(
           key: const ValueKey('musics-loop'),
           icon: Icons.repeat_rounded,
-          tooltip: 'Loop this track',
+          tooltip: Loc.t('Loop this track', 'Повторять трек'),
           active: player.looping,
           activeColor: const Color(0xFFFFA59A),
           onTap: () => player.setLooping(!player.looping),
@@ -493,7 +525,7 @@ class _Transport extends StatelessWidget {
         HoverIcon(
           key: const ValueKey('musics-prev'),
           icon: Icons.skip_previous_rounded,
-          tooltip: 'Previous',
+          tooltip: Loc.t('Previous', 'Предыдущий'),
           size: 42,
           iconSize: 26,
           onTap: player.previous,
@@ -504,7 +536,7 @@ class _Transport extends StatelessWidget {
         HoverIcon(
           key: const ValueKey('musics-next'),
           icon: Icons.skip_next_rounded,
-          tooltip: 'Next',
+          tooltip: Loc.t('Next', 'Следующий'),
           size: 42,
           iconSize: 26,
           onTap: player.next,
@@ -513,7 +545,7 @@ class _Transport extends StatelessWidget {
         HoverIcon(
           key: const ValueKey('musics-shuffle'),
           icon: Icons.shuffle_rounded,
-          tooltip: 'Shuffle',
+          tooltip: Loc.t('Shuffle', 'Перемешать'),
           active: player.shuffle,
           activeColor: const Color(0xFFFFA59A),
           onTap: () => player.setShuffle(!player.shuffle),

@@ -28,9 +28,16 @@ class MorphPanelController extends ChangeNotifier {
     required Rect4 buttonRect,
     required Rect4 menuRect,
     double menuRadius = 25.0,
+    this.instantOpen = false,
   })  : _buttonRect = buttonRect,
         _menuRect = menuRect,
         _menuRadius = menuRadius;
+
+  /// When true the panel skips the button flight entirely: the glass appears
+  /// already full-size at the menu's rect and just fades in in place. The
+  /// 9-dot launcher uses it, so the menu is never a drop that floats above
+  /// its place and settles a second later.
+  final bool instantOpen;
 
   MorphFrame? get frame => _frame;
   bool get isOpen => _isOpen;
@@ -83,7 +90,9 @@ class MorphPanelController extends ChangeNotifier {
       _buttonRect,
       _menuRect,
       _menuRadius,
-      from: _frame,
+      // A fresh instant panel starts as the finished glass in place (its
+      // content then fades in), otherwise the flight hands its frame over.
+      from: _startFrom(),
       // A motion that was already flying (opening or closing mid-air) hands
       // its velocity over, so the drop keeps sailing along its spring path
       // instead of restarting with a straight throw.
@@ -91,6 +100,25 @@ class MorphPanelController extends ChangeNotifier {
     );
     _isOpen = true;
     _start();
+  }
+
+  /// The frame the open motion starts from: the current mid-air frame after a
+  /// reversal, the resting glass for a fresh open of an instant panel, or
+  /// nothing (the button capsule) for a fresh flight.
+  MorphFrame? _startFrom() {
+    if (_frame != null) return _frame;
+    if (!instantOpen) return null;
+    return MorphFrame(
+      body: List<double>.from(_menuRect),
+      bodyRadius: _menuRadius,
+      contentScale: 1,
+      contentOpacity: 0,
+      lens: 0,
+      glassOpacity: 1,
+      soften: 0,
+      reveal: 0,
+      done: false,
+    );
   }
 
   /// Shrinks the panel back into its button.

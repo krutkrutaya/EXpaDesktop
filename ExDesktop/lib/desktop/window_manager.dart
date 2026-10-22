@@ -35,6 +35,15 @@ class DesktopArea {
   /// Above the shell's bottom edge.
   static const double insetBottom = 20;
 
+  /// How far a maximized window sits from the shell's own surfaces: a tight
+  /// 5 px from the waybar above, the dock on the right, and the screen's
+  /// left/bottom edges (nothing else lives there). This is "just a bigger
+  /// window", not a screen-edge-hugging fullscreen.
+  static const double maximizeInsetLeft = 5;
+  static const double maximizeInsetTop = 65; // waybar 60 tall + 5 gap
+  static const double maximizeInsetRight = 82; // dock 72 wide + 5 margin + 5 gap
+  static const double maximizeInsetBottom = 5;
+
   /// The smallest window the manager allows.
   static const double minWidth = 340;
   static const double minHeight = 240;
@@ -56,6 +65,18 @@ class DesktopArea {
 
   double get usableWidth => (right - left).clamp(0, width).toDouble();
   double get usableHeight => (bottom - top).clamp(0, height).toDouble();
+
+  /// Where a maximized window goes: 5 px away from the waybar and the dock,
+  /// and 5 px from the free screen edges (left and bottom).
+  Rect4 get maximizeRect {
+    final w = (width - maximizeInsetLeft - maximizeInsetRight)
+        .clamp(DesktopArea.minWidth, width)
+        .toDouble();
+    final h = (height - maximizeInsetTop - maximizeInsetBottom)
+        .clamp(DesktopArea.minHeight, height)
+        .toDouble();
+    return [maximizeInsetLeft, maximizeInsetTop, w, h];
+  }
 
   /// True when [rect] lies inside the usable desktop.
   bool contains(Rect4 rect) =>
@@ -89,6 +110,11 @@ class AppWindow {
   Rect4 rect;
 
   bool minimized;
+
+  /// Incremented every time a minimized window comes back. The window widget
+  /// reads it on mount to choose the restore genie instead of a fresh-open
+  /// pop; a brand-new window starts at zero.
+  int restoreCount = 0;
 
   /// The size before the window was maximized, restored on toggle.
   Rect4? restoreRect;
@@ -165,6 +191,7 @@ class WindowManager {
     if (existing != null) {
       if (existing.minimized) {
         existing.minimized = false;
+        existing.restoreCount++;
       }
       if (focus) _raise(existing);
       return existing;
@@ -217,7 +244,10 @@ class WindowManager {
   void focus(int id) {
     final window = _byId(id);
     if (window == null) return;
-    if (window.minimized) window.minimized = false;
+    if (window.minimized) {
+      window.minimized = false;
+      window.restoreCount++;
+    }
     _raise(window);
   }
 
@@ -253,6 +283,7 @@ class WindowManager {
     final window = _byId(id);
     if (window == null) return;
     window.minimized = false;
+    window.restoreCount++;
     _raise(window);
   }
 
@@ -285,7 +316,9 @@ class WindowManager {
       return;
     }
     window.restoreRect = List<double>.from(window.rect);
-    window.rect = [area.left, area.top, area.usableWidth, area.usableHeight];
+    // Maximized is tight to the screen: 5 px from the sides, not the old
+    // inset rectangle with its wide margins.
+    window.rect = area.maximizeRect;
     _raise(window);
   }
 
@@ -336,7 +369,10 @@ class WindowManager {
     for (final window in _windows) {
       final restore = window.restoreRect;
       if (restore != null) window.restoreRect = _clampRect(restore);
-      window.rect = _clampRect(window.rect);
+      // A maximized window always lands on the new area's maximize rect, so
+      // it keeps hugging the screen after a resize.
+      window.rect =
+          window.maximized ? List<double>.from(area.maximizeRect) : _clampRect(window.rect);
     }
   }
 

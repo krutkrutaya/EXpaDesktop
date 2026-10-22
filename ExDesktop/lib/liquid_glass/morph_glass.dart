@@ -29,6 +29,11 @@ class MorphGlass extends StatelessWidget {
   /// Whether the content may be interacted with (false while animating).
   final bool interactive;
 
+  /// When true the whole glass fades with the content, so a panel opens out
+  /// of transparency instead of being fully opaque mid-flight. This is the
+  /// look every panel shares now; pass false to keep the glass hard.
+  final bool fadeWithContent;
+
   const MorphGlass({
     super.key,
     required this.frame,
@@ -38,6 +43,7 @@ class MorphGlass extends StatelessWidget {
     this.tint = const Color(0x99000000),
     this.borderColor = const Color(0x26FFFFFF),
     this.interactive = true,
+    this.fadeWithContent = true,
   });
 
   @override
@@ -46,6 +52,11 @@ class MorphGlass extends StatelessWidget {
     final softenBlur = 5.0 * (1.0 - 0.7 * frame.soften.clamp(0.0, 1.0));
     final w = frame.body[2].clamp(0.1, 100000.0);
     final h = frame.body[3].clamp(0.1, 100000.0);
+    // The glass rises by its own clock: visible in the first ~0.1 s of the
+    // open, held through the shrink, melting only at the very end of the
+    // close. The content inside keeps its own (item) opacity.
+    final visible = (frame.glassOpacity * (fadeWithContent ? frame.reveal.clamp(0.0, 1.0) : 1.0))
+        .clamp(0.0, 1.0);
 
     return Positioned(
       left: frame.body[0],
@@ -55,7 +66,7 @@ class MorphGlass extends StatelessWidget {
       child: IgnorePointer(
         ignoring: !interactive,
         child: Opacity(
-          opacity: frame.glassOpacity.clamp(0.0, 1.0),
+          opacity: visible,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(radius),
             child: BackdropFilter(

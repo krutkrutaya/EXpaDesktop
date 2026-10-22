@@ -92,12 +92,23 @@ The animations are not just pretty, they are budgeted:
   wallpaper slideshow repaints the wallpaper, the 45 s radio refresh repaints
   the waybar, music playback repaints the player, and dragging a window
   repaints that window — never the other apps.
-- **Window movement is composited, not repainted**: the entrance/exit springs
-  use opacity + transform, app content sits in a `RepaintBoundary`, and
-  maximize/restore glides between rectangles over 230 ms.
-- Everything is animated: launcher tiles stagger in, settings panes crossfade,
-  the file picker's banner slides down, dock icons scale in and out, the
-  Musics cover crossfades between tracks, and the snip preview fades in.
+- **Window movement is composited, not repainted**: app content sits in a
+  `RepaintBoundary`, and maximize/restore glides between rectangles over
+  230 ms. A maximized window stops **5 px** from the dock, the waybar and the
+  free screen edges — "just a bigger window", not edge-to-edge fullscreen.
+- **Opening and closing have a readable rhythm.** A fresh window pops in over
+  260 ms; closing holds it fully visible for the first fifth and fades/lifts
+  it over 320 ms; minimizing and restoring play the macOS genie out of the
+  dock. The title-bar buttons sit outside the drag/double-tap detector, so
+  their taps are not held for the double-click timeout.
+- **The mini player's artwork answers the pointer**: its corner radius eases
+  from a circle (19) to the glass rounding (10) on hover and tighter (7) while
+  pressed, then back.
+- Everything is animated: settings panes crossfade, the appearance sheets
+  slide under a Back button, the Vibe bar's buttons save as they change, the
+  Wi-Fi cards expand in place, the file picker's banner slides down, dock
+  icons scale in and out, the Musics cover crossfades between tracks, and the
+  snip preview fades in.
 
 ## ☀️ Display Control
 
@@ -129,25 +140,24 @@ All three sliders use the same wavy WaveSlider as the player.
 
 ## 🎛️ Settings that actually switch things
 
-The parameters the shell can drive itself live **in the shell**, not behind a
-link to Windows:
+The shell's own settings window is a real app inside the shell; every control
+either changes something here or opens the Windows page that owns it.
 
-| Parameter | Read from | Switched by |
-|-----------|-----------|-------------|
-| Volume / mute | `IAudioEndpointVolume` (COM) | the same endpoint, no windows opened |
-| Wi-Fi | `Windows.Devices.Radios` + `Get-NetAdapter` | `Radio.SetStateAsync` — the API behind the taskbar's quick settings, no UAC |
-| Bluetooth | `Windows.Devices.Radios` | `Radio.SetStateAsync` |
-| Brightness | the Rust DDC/CI DLL | the same DLL |
+| Surface | What it does |
+|---------|--------------|
+| Sound | master slider with the small mute icon on the right, a short divider, then **every app that is making noise** with its own slider and mute |
+| Wallpaper & theme | the Appearance tile: every wallpaper for the active desktop, the **timer switch** and a seconds field, autosaved |
+| Vibe bar | the Appearance tile: add/remove waybar panels (sound, Bluetooth, Wi-Fi, brightness, clipboard, emoji, updates, calendar, notifications); the bar widens when it needs room |
+| Display & monitor | the **real** resolutions, orientations and refresh rates Windows reports, then brightness/contrast/warmth |
+| Date & time | the Windows time-zone table, an "automatic" switch (off by default) and a region dropdown; the desktop clock follows the zone |
+| Wi-Fi | its own flyout: search, four-bar signal, lock icon, password card, auto-join from the Windows profile, connected network pinned with Disconnect |
+| Updates | at the very bottom: EXpaDesktop releases and Windows Update (removed from Security) |
 
-`ms-settings:` is the fallback: the rows the shell does not own ("Default
-apps", "Windows Update", …) still open the matching Windows page, but every
-row the shell owns shows its real state and a switch that works.
-
-Opening a radio goes through a hidden PowerShell bridge (`CreateProcessW`
-with `CREATE_NO_WINDOW`, so no console flashes) and a worker isolate, so the
-UI never waits on a process. Windows' own radio API answers something real —
-the shell shows what the machine reports, including "device not found" and
-"blocked by the system".
+The native backend is **`sysctl.dll`** (Rust): WASAPI master volume and
+per-app sessions, the WLAN API (scan / profile XML / connect / disconnect),
+GDI monitor modes, and the DST-aware time-zone table. Radios still go through
+`Windows.Devices.Radios`, and `ms-settings:` remains the fallback for panels
+Windows owns.
 
 ### Command line
 
@@ -174,9 +184,9 @@ ExDesktop/
 │   │   ├── playlist.dart        #   next/previous/shuffle + time formatting
 │   │   └── track.dart           #   one track
 │   ├── desktop/                 # 🪟 in-app windows
-│   │   ├── app_catalog.dart     #   the ten apps, their ids and sizes
+│   │   ├── app_catalog.dart     #   the eleven apps, their ids and sizes
 │   │   ├── window_manager.dart  #   z-order, focus, minimize, drag, resize
-│   │   ├── shell_window.dart    #   the chrome + the entrance spring
+│   │   ├── shell_window.dart    #   chrome, entrance, genie, 5 px maximize
 │   │   ├── desktop_surface.dart #   the Stack of windows
 │   │   ├── app_icons.dart
 │   │   └── apps/                #   the windows themselves
@@ -188,7 +198,8 @@ ExDesktop/
 │   │       ├── tasks_app.dart
 │   │       ├── browser_app.dart #   WebView2 in a Flutter texture
 │   │       ├── musics_app.dart
-│   │       ├── settings_view.dart
+│   │       ├── configs_app.dart #   intentionally empty shelf
+│   │       ├── settings_view.dart #  sound, display, appearance, time, updates
 │   │       └── terminal_app.dart
 │   ├── apps/                    # pure models (no widgets), mock-tested
 │   │   ├── calculator_engine.dart
@@ -203,11 +214,18 @@ ExDesktop/
 │   │   ├── music_scanner.dart   #  the Rust scanner's FFI + JSON
 │   │   └── wav_info.dart        #  WAV duration from the header
 │   ├── ui/                      # glass controls + the waybar's mini player
+│   ├── native/
+│   │   └── sysctl.dart          # FFI + JSON parsers for sysctl.dll
+│   ├── audio_sessions.dart      # per-app sessions (Rust WASAPI)
 │   ├── sound_control.dart       # one owner of the master volume and mute
+│   ├── volume_control.dart      # the master endpoint through sysctl.dll
+│   ├── wifi_control.dart        # WLAN API wrapper: scan / join / leave
 │   ├── radio_control.dart       # Wi-Fi / Bluetooth state and switching
 │   ├── radio_script.dart        # the PowerShell bridge to Windows' radio API
 │   ├── hidden_process.dart      # console tools with no console window
-│   ├── native_heap.dart         # malloc/free for the FFI modules
+│   ├── native_heap.dart         # malloc/free for the old FFI modules
+│   ├── i18n.dart                # English/Russian shell strings
+│   ├── shell_prefs.dart         # prefs.cfg: slideshow, waybar, zone, display
 │   ├── assistant_prompt.dart    # the assistant's system prompt + catalog
 │   ├── command_router.dart      # phrases → intents → machine actions
 │   ├── shell_layout.dart        # where every panel sits, as testable numbers
@@ -218,25 +236,28 @@ ExDesktop/
 │   ├── liquid_glass/            # 🔬 physics & widgets
 │   └── rust/
 │       ├── src/lib.rs           #   DDC/CI + gamma ramps
-│       └── music_scan/          #   fast folder scan + ID3/covers
+│       ├── music_scan/          #   fast folder scan + ID3/covers
+│       └── sysctl/              #   audio, Wi-Fi, display modes, time zones
 ├── assets/                      # fons, music, icons
 └── test/
     ├── mock_harness.dart             # 🧪 shared check/report harness
     ├── mock_all.dart                 # 🧪 everything, one total
-    ├── desktop_check.dart            # 🧪 117 window manager + catalog checks
+    ├── desktop_check.dart            # 🧪 118 window manager + catalog checks
     ├── apps_check.dart               # 🧪 150 app-model checks
     ├── playback_check.dart           # 🧪 54 spin/beat/playlist checks
     ├── library_check.dart            # 🧪 69 import/WAV/Rust-JSON checks
-    ├── shell_check.dart              # 🧪 335 layout/policy/ID3/workspace checks
+    ├── native_check.dart             # 🧪 39 audio/Wi-Fi/display/zone parsers
+    ├── shell_check.dart              # 🧪 414 layout/waybar/policy/ID3 checks
     ├── system_mock_check.dart        # 🧪 476 system + assistant checks
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics checks
     └── widget/
-        ├── shell_test.dart           # 🧪 23 shell widget tests
-        ├── settings_view_test.dart   # 🧪 13 settings widget tests
+        ├── shell_test.dart           # 🧪 29 shell widget tests
+        ├── settings_view_test.dart   # 🧪 16 settings panes
         ├── player_controller_test.dart # 🧪 10 player tests
         ├── apps_extra_test.dart      # 🧪 4 browser/notepad tests
         ├── music_add_test.dart       # 🧪 4 picker + Musics tests
         ├── animations_test.dart      # 🧪 3 idle-ticker regression tests
+        ├── mini_player_test.dart     # 🧪 1 hover/press rounding test\n        ├── configs_test.dart        # 🧪 1 empty-Configs test
         └── track_art_test.dart       # 🧪 4 artwork tests
 ```
 
@@ -299,9 +320,10 @@ flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desk
 
 The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
 `audioplayers_windows_plugin.dll`, `flutter_inappwebview_windows_plugin.dll`,
-`WebView2Loader.dll`, `music_scan.dll` (when built) and `data\flutter_assets\`.
-The Windows runner lives in `ExDesktop/windows/` (generated with
-`flutter create --platforms=windows .` and committed, so a fresh clone builds).
+`WebView2Loader.dll`, `brightness.dll`, `music_scan.dll`, `sysctl.dll` (when
+built) and `data\flutter_assets\`. The Windows runner lives in
+`ExDesktop/windows/` (generated with `flutter create --platforms=windows .`
+and committed, so a fresh clone builds).
 
 The Browser window needs the **Microsoft Edge WebView2 runtime**, which ships
 with Windows 10/11 and with Edge; if it is missing the window shows its start
@@ -312,7 +334,7 @@ page and says so instead of breaking.
 subdirectories: C++/WinRT still includes `<experimental/coroutine>`, and MSVC
 14.51 turned that into a hard error. It is Microsoft's documented escape hatch.
 
-**Nothing binary is committed.** There are two optional Rust libraries; both
+**Nothing binary is committed.** There are three optional Rust libraries; all
 are built once with a Rust toolchain:
 
 ```bash
@@ -322,7 +344,12 @@ cp target/release/brightness.dll .        # local only, gitignored
 
 cd music_scan
 cargo build --release
-cp target/release/music_scan.dll .        # local only, gitignored
+cp target/release/music_scan.dll .
+
+cd ../sysctl
+cargo build --release
+cp target/release/sysctl.dll .
+cargo test                                # 6 pure unit tests
 ```
 
 - **brightness.dll** — DDC/CI + gamma ramps. Without it the brightness sliders
@@ -331,6 +358,10 @@ cp target/release/music_scan.dll .        # local only, gitignored
   title/artist/TLEN/APIC and WAV durations in one native pass and caches the
   covers. Without it the shell falls back to the pure-Dart scanner (correct,
   just slower on a big library).
+- **sysctl.dll** — master volume + per-app WASAPI sessions, Wi-Fi scan/join
+  through the WLAN API, the monitor's real modes, and the DST-aware time-zone
+  table. Every call fails soft; without it the settings panes stay readable but
+  cannot touch the machine, and `native_check.dart` still validates the JSON.
 
 `flutter build windows` copies each DLL next to the exe when it is present and
 prints a status line when it is not.
@@ -338,22 +369,24 @@ prints a status line when it is not.
 ## 🧪 Tests
 
 Widget tests run under `flutter test`; the window manager, app models, player
-math, library and system suites are plain Dart scripts (no Flutter needed).
-`mock_all.dart` runs all of them and prints a single total —
-**1254 checks**, plus **61 widget tests**.
+math, library, native parsers and system suites are plain Dart scripts (no
+Flutter needed). `mock_all.dart` runs all of them and prints a single total —
+**1373 checks** with the optional Rust DLLs built (1364 without), plus
+**72 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 61 widget tests
+flutter test                                 # 72 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1254 mock checks
-dart run test/desktop_check.dart             # windows: 117 checks
+dart run test/mock_all.dart                  # 1373 mock checks
+dart run test/desktop_check.dart             # windows: 118 checks
 dart run test/apps_check.dart                # app models: 150 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
 dart run test/library_check.dart             # import, WAV, Rust JSON: 69 checks
+dart run test/native_check.dart              # audio/Wi-Fi/display/zone parsers: 39 checks
 dart run test/liquid_glass_mock_check.dart   # physics only: 53 checks
 dart run test/system_mock_check.dart         # system + assistant: 476 checks
-dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 335 checks
+dart run test/shell_check.dart               # layout, waybar, panels, ID3: 414 checks
 ```
 
 ```
