@@ -12,12 +12,19 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../audio_sessions.dart';
+import '../../expa/de_config.dart';
+import '../../expa/default_apps.dart';
+import 'dart:io' show Platform;
+
+import '../../expa/drives.dart';
+import '../../expa/input_settings.dart';
+import '../../expa/notifications.dart';
+import '../../expa/waybar_catalog.dart';
 import '../../i18n.dart';
 import '../../liquid_glass/wave_slider.dart';
 import '../../native/sysctl.dart';
 import '../../radio_control.dart';
 import '../../sound_control.dart';
-import '../../system_actions.dart';
 import '../../ui/glass.dart';
 
 /// The display parameters the shell owns, plus the callbacks that apply them.
@@ -59,19 +66,11 @@ class SettingsItem {
   final IconData icon;
   final String label;
   final String section;
-  final String? uri;
-
-  /// True for a pane whose real control lives in Windows; the pane then ends
-  /// with an "Open in Windows" button instead of pretending to own it.
-  final bool native;
-
   const SettingsItem({
     required this.id,
     required this.icon,
     required this.label,
     required this.section,
-    this.uri,
-    this.native = false,
   });
 }
 
@@ -81,43 +80,6 @@ class _SettingsSection {
 
   const _SettingsSection(this.title, this.items);
 }
-
-/// The waybar keys the Vibe bar pane can manage, in the order it lists them.
-const List<String> waybarKeys = [
-  'sound',
-  'bluetooth',
-  'wifi',
-  'brightness',
-  'clipboard',
-  'emoji',
-  'updates',
-  'calendar',
-  'notifications',
-];
-
-const Map<String, (String, IconData)> waybarMeta = {
-  'sound': ('Sound', Icons.volume_up_rounded),
-  'bluetooth': ('Bluetooth', Icons.bluetooth_rounded),
-  'wifi': ('Wi-Fi', Icons.wifi_rounded),
-  'brightness': ('Brightness', Icons.brightness_6_rounded),
-  'clipboard': ('Clipboard', Icons.content_paste_rounded),
-  'emoji': ('Emoji', Icons.emoji_emotions_rounded),
-  'updates': ('Updates', Icons.system_update_rounded),
-  'calendar': ('Calendar', Icons.calendar_today_rounded),
-  'notifications': ('Notifications', Icons.notifications_none_rounded),
-};
-
-const Map<String, (String, String, String)> waybarMetaRu = {
-  'sound': ('Звук', 'Sound', 'Звук'),
-  'bluetooth': ('Блютус', 'Bluetooth', 'Блютус'),
-  'wifi': ('Сети', 'Wi-Fi', 'Сети'),
-  'brightness': ('Яркость', 'Brightness', 'Яркость'),
-  'clipboard': ('Буфер обмена', 'Clipboard', 'Буфер обмена'),
-  'emoji': ('Эмодзи', 'Emoji', 'Эмодзи'),
-  'updates': ('Обновления', 'Updates', 'Обновления'),
-  'calendar': ('Календарь', 'Calendar', 'Календарь'),
-  'notifications': ('Уведомления', 'Notifications', 'Уведомления'),
-};
 
 /// The regions the Date & time pane offers. Windows' own locale ids are far
 /// too many for a dropdown; these are the common ones, and the choice is
@@ -175,8 +137,30 @@ class SettingsView extends StatefulWidget {
   final ValueChanged<String>? onDisplayOrient;
   final ValueChanged<String>? onDisplayHz;
 
-  /// Opens a URI: the updates pane's two buttons.
-  final Future<void> Function(String uri)? onOpenUpdates;
+  /// Opens the in-shell Updater window (Settings → Updates).
+  final VoidCallback? onOpenUpdater;
+
+  /// EXPA customization. Every sheet edits this object and saves it through
+  /// [onConfig]; the shell applies it immediately.
+  final DeConfig config;
+  final ValueChanged<DeConfig>? onConfig;
+
+  /// The DE's file associations and notification center.
+  final FileAssociations associations;
+  final ValueChanged<FileAssociations>? onAssociations;
+  final NotificationCenter? notifications;
+
+  /// Locks the desktop right now (the shell shows the lock overlay).
+  final VoidCallback? onLock;
+
+  /// Opens a drive/folder in the Files window.
+  final ValueChanged<String>? onOpenPath;
+
+  /// The pointer/keyboard backend; the tests inject a recorder.
+  final InputSource? inputSource;
+
+  /// Test seam for the Drives pane.
+  final List<DriveEntry>? drives;
 
   // Test seams: real values are loaded from the native backend when omitted.
   final DisplayState? displayState;
@@ -208,7 +192,16 @@ class SettingsView extends StatefulWidget {
     this.onDisplayRes,
     this.onDisplayOrient,
     this.onDisplayHz,
-    this.onOpenUpdates,
+    this.onOpenUpdater,
+    this.config = DeConfig.defaults,
+    this.onConfig,
+    this.associations = FileAssociations.standard,
+    this.onAssociations,
+    this.notifications,
+    this.onLock,
+    this.onOpenPath,
+    this.inputSource,
+    this.drives,
     this.displayState,
     this.timezones,
     this.audioSessions,
@@ -241,6 +234,10 @@ class _SettingsViewState extends State<SettingsView> {
   bool _loadingTimezones = false;
 
   DisplayState _displayState = DisplayState.empty;
+  late DeConfig _draft;
+  late InputSettings _input;
+  List<DriveEntry> _drives = const [];
+  late final TextEditingController _pinController;
 
   late final TextEditingController _periodController;
 
@@ -264,25 +261,19 @@ class _SettingsViewState extends State<SettingsView> {
             id: 'mouse',
             icon: Icons.mouse,
             label: Loc.t('Mouse & touchpad', 'Мышь и сенсорная панель'),
-            section: 'input',
-            uri: 'ms-settings:mousetouchpad',
-            native: true,
+            section: 'pointer',
           ),
           SettingsItem(
             id: 'keyboard',
             icon: Icons.keyboard,
             label: Loc.t('Keyboard', 'Клавиатура'),
-            section: 'input',
-            uri: 'ms-settings:typing',
-            native: true,
+            section: 'keyboard',
           ),
           SettingsItem(
             id: 'accessibility',
             icon: Icons.accessibility,
             label: Loc.t('Accessibility', 'Специальные возможности'),
             section: 'accessibility',
-            uri: 'ms-settings:easeofaccess',
-            native: true,
           ),
         ]),
         _SettingsSection(Loc.t('Connected devices', 'Подключённые устройства'),
@@ -295,11 +286,9 @@ class _SettingsViewState extends State<SettingsView> {
               ),
               SettingsItem(
                 id: 'devices',
-                icon: Icons.camera,
-                label: Loc.t('Drives & cameras', 'Диски и камеры'),
-                section: 'devices',
-                uri: 'ms-settings:connecteddevices',
-                native: true,
+                icon: Icons.storage_rounded,
+                label: Loc.t('Drives & storage', 'Диски и хранилище'),
+                section: 'drives',
               ),
             ]),
         _SettingsSection(Loc.t('Network & connectivity', 'Сеть'), [
@@ -323,43 +312,27 @@ class _SettingsViewState extends State<SettingsView> {
             id: 'defaultapps',
             icon: Icons.apps,
             label: Loc.t('Default apps', 'Приложения по умолчанию'),
-            section: 'apps',
-            uri: 'ms-settings:defaultapps',
-            native: true,
+            section: 'associations',
           ),
           SettingsItem(
             id: 'notifications',
             icon: Icons.notifications,
             label: Loc.t('Notifications', 'Уведомления'),
-            section: 'apps',
-            uri: 'ms-settings:notifications',
-            native: true,
+            section: 'notifications',
           ),
           SettingsItem(
             id: 'multitasking',
             icon: Icons.window,
             label: Loc.t('Multitasking & windows', 'Многозадачность и окна'),
-            section: 'apps',
-            uri: 'ms-settings:multitasking',
-            native: true,
+            section: 'multitasking',
           ),
         ]),
-        _SettingsSection(Loc.t('Security & privacy', 'Безопасность'), [
-          SettingsItem(
-            id: 'signin',
-            icon: Icons.login,
-            label: Loc.t('Login screen', 'Экран входа'),
-            section: 'security',
-            uri: 'ms-settings:signinoptions',
-            native: true,
-          ),
+        _SettingsSection(Loc.t('Lock screen', 'Экран блокировки'), [
           SettingsItem(
             id: 'lockscreen',
             icon: Icons.lock,
-            label: Loc.t('Lock screen', 'Экран блокировки'),
-            section: 'security',
-            uri: 'ms-settings:lockscreen',
-            native: true,
+            label: Loc.t('Lock screen & PIN', 'Экран блокировки и PIN'),
+            section: 'lock',
           ),
         ]),
         _SettingsSection(Loc.t('Language & time', 'Язык и время'), [
@@ -394,6 +367,13 @@ class _SettingsViewState extends State<SettingsView> {
     _sessions = widget.audioSessions ?? const [];
     _sessionsLoaded = widget.audioSessions != null;
     _displayState = widget.displayState ?? SysCtl.displayState();
+    _draft = widget.config;
+    _input = InputSettings(widget.inputSource ?? const NativeInputSource())
+      ..load();
+    _drives = widget.drives ?? const [];
+    if (widget.drives == null) unawaited(_loadDrives());
+    _pinController = TextEditingController(text: widget.config.lockPin);
+    widget.notifications?.addListener(_onNotifications);
     _timezones = widget.timezones ?? const [];
     if (widget.timezones == null) unawaited(_loadTimezones());
     _periodController =
@@ -420,12 +400,19 @@ class _SettingsViewState extends State<SettingsView> {
         widget.displayState != null) {
       _displayState = widget.displayState!;
     }
+    if (oldWidget.config != widget.config) _draft = widget.config;
+    if (oldWidget.notifications != widget.notifications) {
+      oldWidget.notifications?.removeListener(_onNotifications);
+      widget.notifications?.addListener(_onNotifications);
+    }
   }
 
   @override
   void dispose() {
     widget.navigator.removeListener(_onNavigator);
     _sessionPoll?.cancel();
+    _pinController.dispose();
+    widget.notifications?.removeListener(_onNotifications);
     _periodController.dispose();
     super.dispose();
   }
@@ -720,14 +707,32 @@ class _SettingsViewState extends State<SettingsView> {
           'wifi' => _radioPane(item, RadioKind.wifi),
           'bluetooth' => _radioPane(item, RadioKind.bluetooth),
           'display' => _displayPane(item),
+          'pointer' => _pointerPane(item),
+          'keyboard' => _keyboardPane(item),
+          'accessibility' => _accessibilityPane(item),
+          'drives' => _drivesPane(item),
+          'associations' => _associationsPane(item),
+          'notifications' => _notificationsPane(item),
+          'multitasking' => _multitaskingPane(item),
+          'lock' => _lockPane(item),
           'appearance' => _appearancePane(item),
           'datetime' => _dateTimePane(item),
           'updates' => _updatesPane(item),
           'language' when item.id == 'region' => _languagePane(item),
-          _ => _windowsPane(item),
+          _ => _paneTitle(item),
         },
       ),
     );
+  }
+
+  Future<void> _loadDrives() async {
+    final drives = await loadDrives();
+    if (!mounted) return;
+    setState(() => _drives = drives);
+  }
+
+  void _onNotifications() {
+    if (mounted) setState(() {});
   }
 
   Widget _paneTitle(SettingsItem item, {Widget? trailing}) {
@@ -1279,20 +1284,567 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
+  // ---- input ----------------------------------------------------------------
+
+  Widget _pointerPane(SettingsItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 14),
+        _inputSlider(
+          label: Loc.t('Pointer speed', 'Скорость указателя'),
+          value: ((_input.mouseSpeed - 1) / 19).clamp(0.0, 1.0),
+          text: '${_input.mouseSpeed}',
+          onChanged: (value) => setState(
+              () => _input.mouseSpeed = (1 + value * 19).round().clamp(1, 20)),
+          onEnd: () => _input.updateMouseSpeed(_input.mouseSpeed),
+        ),
+        const SizedBox(height: 8),
+        _inputSlider(
+          label: Loc.t('Scroll lines per notch', 'Строк на щелчок колеса'),
+          value: ((_input.wheelLines - 1) / 19).clamp(0.0, 1.0),
+          text: '${_input.wheelLines}',
+          onChanged: (value) => setState(
+              () => _input.wheelLines = (1 + value * 19).round().clamp(1, 20)),
+          onEnd: () => _input.updateWheelLines(_input.wheelLines),
+        ),
+        const SizedBox(height: 8),
+        _configToggle(
+          key: const ValueKey('settings-mouse-swap'),
+          label: Loc.t('Swap primary and secondary buttons',
+              'Поменять основную и дополнительную кнопки'),
+          hint: Loc.t('Left-handed layout', 'Раскладка для левой руки'),
+          value: _input.mouseSwap,
+          onChanged: (on) {
+            setState(() => _input.updateMouseSwap(on));
+          },
+        ),
+        const SizedBox(height: 8),
+        Caption(Loc.t(
+          'These are the system pointer settings, applied immediately.',
+          'Это системные настройки указателя, применяются сразу.',
+        )),
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _keyboardPane(SettingsItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 14),
+        _inputSlider(
+          label: Loc.t('Repeat delay', 'Задержка повтора'),
+          value: (_input.keyDelay / 3).clamp(0.0, 1.0),
+          text: _input.keyDelay == 0
+              ? Loc.t('short', 'короткая')
+              : _input.keyDelay >= 3
+                  ? Loc.t('long', 'длинная')
+                  : '${_input.keyDelay}',
+          onChanged: (value) => setState(
+              () => _input.keyDelay = (value * 3).round().clamp(0, 3)),
+          onEnd: () => _input.updateKeyDelay(_input.keyDelay),
+        ),
+        const SizedBox(height: 8),
+        _inputSlider(
+          label: Loc.t('Repeat rate', 'Частота повтора'),
+          value: (_input.keySpeed / 31).clamp(0.0, 1.0),
+          text: '${_input.keySpeed}',
+          onChanged: (value) => setState(
+              () => _input.keySpeed = (value * 31).round().clamp(0, 31)),
+          onEnd: () => _input.updateKeySpeed(_input.keySpeed),
+        ),
+        const SizedBox(height: 8),
+        Caption(Loc.t(
+          'The same repeat delay and rate Windows uses. No Settings page is '
+          'opened.',
+          'Те же задержка и частота повтора, что и в Windows. Страница '
+          'настроек не открывается.',
+        )),
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _inputSlider({
+    required String label,
+    required double value,
+    required String text,
+    required ValueChanged<double> onChanged,
+    required VoidCallback onEnd,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(label,
+                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            const Spacer(),
+            Text(text,
+                style: const TextStyle(color: Colors.white, fontSize: 12)),
+          ],
+        ),
+        SizedBox(
+          height: 30,
+          child: WaveSlider(
+            value: value,
+            onChanged: onChanged,
+            onChangeEnd: (_) => onEnd(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _accessibilityPane(SettingsItem item) {
+    final font = ((_draft.fontScale - 0.85) / 0.35).clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 14),
+        _configToggle(
+          key: const ValueKey('settings-accessibility-animations'),
+          label: Loc.t('Reduce motion', 'Меньше движения'),
+          hint: Loc.t('Turn off window and panel animations',
+              'Выключить анимации окон и панелей'),
+          value: !_draft.animationsEnabled,
+          onChanged: (reduce) =>
+              _commitConfig(_draft.copyWith(animationsEnabled: !reduce)),
+        ),
+        const SizedBox(height: 8),
+        _configSlider(
+          key: const ValueKey('settings-accessibility-font'),
+          label: Loc.t('Text scale', 'Масштаб текста'),
+          value: font,
+          text: '${(_draft.fontScale * 100).round()}%',
+          onPreview: (value) => _previewConfig(
+              _draft.copyWith(fontScale: 0.85 + value * 0.35)),
+          onCommit: () => _commitConfig(_draft),
+        ),
+        const SizedBox(height: 8),
+        Caption(Loc.t(
+          'The shell scales its own text and motion. Windows keeps its own '
+          'accessibility settings.',
+          'Оболочка масштабирует свой текст и движение. У Windows свои '
+          'настройки доступности.',
+        )),
+        const Spacer(),
+      ],
+    );
+  }
+
+  // ---- drives / associations / notifications / multitasking / lock ----------
+
+  Widget _drivesPane(SettingsItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(
+          item,
+          trailing: PillButton(
+            key: const ValueKey('settings-drives-refresh'),
+            label: Loc.t('Refresh', 'Обновить'),
+            icon: Icons.refresh_rounded,
+            onTap: () => unawaited(_loadDrives()),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_drives.isEmpty)
+          Caption(Loc.t(
+            'No drives were reported by the system.',
+            'Система не сообщила о дисках.',
+          ))
+        else
+          Expanded(
+            child: ListView.builder(
+              itemCount: _drives.length,
+              itemBuilder: (context, index) {
+                final drive = _drives[index];
+                return Padding(
+                  key: ValueKey('settings-drive-${drive.id}'),
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.storage_rounded,
+                          size: 17, color: Colors.white60),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${drive.id}  ${drive.label}',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12.5),
+                            ),
+                            const SizedBox(height: 4),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(3),
+                              child: LinearProgressIndicator(
+                                value: drive.usedFraction,
+                                minHeight: 4,
+                                color: const Color(0xFF8AB4F8),
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: 0.10),
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Caption(drive.sizeText, size: 9.5),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      PillButton(
+                        key: ValueKey('settings-drive-open-${drive.id}'),
+                        label: Loc.t('Open', 'Открыть'),
+                        onTap: () => widget.onOpenPath
+                            ?.call('${drive.id}${Platform.pathSeparator}'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _associationsPane(SettingsItem item) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 6),
+        Caption(Loc.t(
+          'Double-clicking a file in Files opens the app chosen here. The '
+          'mapping belongs to the desktop, not to Windows.',
+          'Двойной клик по файлу в Файлах открывает выбранное приложение. '
+          'Таблица принадлежит оболочке, а не Windows.',
+        )),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView.builder(
+            itemCount: FileAssociations.editableExtensions.length,
+            itemBuilder: (context, index) {
+              final extension =
+                  FileAssociations.editableExtensions[index];
+              final app = widget.associations.byExtension[extension] ?? 'files';
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 1),
+                child: Row(
+                  key: ValueKey('settings-assoc-$extension'),
+                  children: [
+                    SizedBox(
+                      width: 46,
+                      child: Text(
+                        '.$extension',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 11.5),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: PopupMenuButton<String>(
+                        key: ValueKey('settings-assoc-app-$extension'),
+                        tooltip: '',
+                        color: const Color(0xF01A1A1A),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        onSelected: (value) => widget.onAssociations?.call(
+                          widget.associations
+                              .withAssociation(extension, value),
+                        ),
+                        itemBuilder: (context) => [
+                          for (final appId
+                              in FileAssociations.builtInApps)
+                            PopupMenuItem<String>(
+                              value: appId,
+                              child: Text(
+                                appId,
+                                style: TextStyle(
+                                  color: app == appId
+                                      ? Colors.white
+                                      : Colors.white70,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
+                        ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  app,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 11.5),
+                                ),
+                              ),
+                              const Icon(Icons.expand_more_rounded,
+                                  size: 14, color: Colors.white38),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _notificationsPane(SettingsItem item) {
+    final center = widget.notifications;
+    final recent = center?.items.take(6).toList() ?? const [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 10),
+        _configToggle(
+          key: const ValueKey('settings-notifications-enabled'),
+          label: Loc.t('Desktop notifications', 'Уведомления оболочки'),
+          hint: Loc.t('Show a toast and keep the history',
+              'Показывать тост и хранить историю'),
+          value: _draft.notificationsEnabled,
+          onChanged: (on) =>
+              _commitConfig(_draft.copyWith(notificationsEnabled: on)),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Caption(center == null
+                ? ''
+                : '${center.unread} ${Loc.t('unread', 'непрочитанных')}'),
+            const Spacer(),
+            if (center != null) ...[
+              PillButton(
+                key: const ValueKey('settings-notifications-read'),
+                label: Loc.t('Read all', 'Прочитать'),
+                onTap: center.markAllRead,
+              ),
+              const SizedBox(width: 6),
+              PillButton(
+                key: const ValueKey('settings-notifications-clear'),
+                label: Loc.t('Clear', 'Очистить'),
+                icon: Icons.delete_sweep_outlined,
+                onTap: center.clear,
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: recent.isEmpty
+              ? Caption(Loc.t(
+                  'No notifications yet. Adding a track or joining a network '
+                  'will show up here.',
+                  'Уведомлений пока нет. Добавление трека или подключение к '
+                  'сети появятся здесь.',
+                ))
+              : ListView(
+                  children: [
+                    for (final entry in recent)
+                      GestureDetector(
+                        key: ValueKey(
+                            'settings-notification-${entry.id}'),
+                        onTap: () => center?.markRead(entry),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Row(
+                            children: [
+                              Icon(
+                                entry.read
+                                    ? Icons.circle_outlined
+                                    : Icons.circle,
+                                size: 8,
+                                color: entry.read
+                                    ? Colors.white24
+                                    : const Color(0xFF8AB4F8),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(entry.title,
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11.5)),
+                                    Text(entry.body,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 10)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _multitaskingPane(SettingsItem item) {
+    final gap = (_draft.snapGap / 20).clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 10),
+        _configToggle(
+          key: const ValueKey('settings-snap'),
+          label: Loc.t('Snap windows to edges', 'Прилипание окон к краям'),
+          hint: Loc.t(
+            'Drag to an edge or use Ctrl+Alt+arrows. The window manager '
+            'tiles it.',
+            'Перетащи к краю или используй Ctrl+Alt+стрелки — оконный '
+            'менеджер разложит окно.',
+          ),
+          value: _draft.snapEnabled,
+          onChanged: (on) =>
+              _commitConfig(_draft.copyWith(snapEnabled: on)),
+        ),
+        const SizedBox(height: 8),
+        _configSlider(
+          key: const ValueKey('settings-snap-gap'),
+          label: Loc.t('Gap between tiles', 'Зазор между плитками'),
+          value: gap,
+          text: '${_draft.snapGap.round()} px',
+          enabled: _draft.snapEnabled,
+          onPreview: (value) =>
+              _previewConfig(_draft.copyWith(snapGap: value * 20)),
+          onCommit: () => _commitConfig(_draft),
+        ),
+        const SizedBox(height: 8),
+        _configToggle(
+          key: const ValueKey('settings-multitask-animations'),
+          label: Loc.t('Window animations', 'Анимации окон'),
+          hint: Loc.t('Open, close and the genie', 'Открытие, закрытие и genie'),
+          value: _draft.animationsEnabled,
+          onChanged: (on) =>
+              _commitConfig(_draft.copyWith(animationsEnabled: on)),
+        ),
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _lockPane(SettingsItem item) {
+    final auto = (_draft.autoLockMinutes / 60).clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _paneTitle(item),
+        const SizedBox(height: 12),
+        _configSlider(
+          key: const ValueKey('settings-auto-lock'),
+          label: Loc.t('Auto-lock after', 'Автоблокировка через'),
+          value: auto,
+          text: _draft.autoLockMinutes == 0
+              ? Loc.t('off', 'выкл')
+              : '${_draft.autoLockMinutes} ${Loc.t('min', 'мин')}',
+          onPreview: (value) => _previewConfig(
+              _draft.copyWith(autoLockMinutes: (value * 60).round())),
+          onCommit: () => _commitConfig(_draft),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                key: const ValueKey('settings-lock-pin'),
+                controller: _pinController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 8,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  counterText: '',
+                  hintText: Loc.t('PIN (optional)', 'PIN (необязательно)'),
+                  hintStyle:
+                      const TextStyle(color: Colors.white38, fontSize: 11.5),
+                ),
+                onSubmitted: (_) => _savePin(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            PillButton(
+              key: const ValueKey('settings-lock-save-pin'),
+              label: Loc.t('Save', 'Сохранить'),
+              onTap: _savePin,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Caption(Loc.t(
+                'The PIN unlocks this desktop. It is stored in prefs.cfg.',
+                'PIN разблокирует этот рабочий стол. Хранится в prefs.cfg.',
+              )),
+            ),
+            const SizedBox(width: 8),
+            PillButton(
+              key: const ValueKey('settings-lock-now'),
+              label: Loc.t('Lock now', 'Заблокировать'),
+              icon: Icons.lock_rounded,
+              onTap: widget.onLock,
+            ),
+          ],
+        ),
+        const Spacer(),
+      ],
+    );
+  }
+
+  void _savePin() {
+    final digits = _pinController.text.replaceAll(RegExp(r'[^0-9]'), '');
+    _pinController.text = digits;
+    _commitConfig(_draft.copyWith(lockPin: digits));
+  }
+
   // ---- appearance -----------------------------------------------------------
 
   Widget _appearancePane(SettingsItem item) {
-    if (_appearanceDetail == 'wallpaper') {
-      return _appearanceSheet(
-        title: Loc.t('Wallpaper & theme', 'Обои и тема'),
-        child: _wallpaperSheet(),
-      );
-    }
-    if (_appearanceDetail == 'vibe') {
-      return _appearanceSheet(
-        title: Loc.t('Vibe bar', 'Вайбар'),
-        child: _vibeSheet(),
-      );
+    final title = switch (_appearanceDetail) {
+      'wallpaper' => Loc.t('Wallpaper & theme', 'Обои и тема'),
+      'vibe' => Loc.t('Vibe bar', 'Вайбар'),
+      'animations' => Loc.t('Animations & effects', 'Анимации и эффекты'),
+      'colors' => Loc.t('Colors & accent', 'Цвета и акцент'),
+      'window' => Loc.t('Window styling', 'Оформление окон'),
+      'dock' => Loc.t('Dock & icons', 'Док и значки'),
+      'desktop' => Loc.t('Desktop & clock', 'Рабочий стол и часы'),
+      'behavior' => Loc.t('System & notifications', 'Система и уведомления'),
+      _ => null,
+    };
+    if (title != null) {
+      return _appearanceSheet(title: title, child: _appearanceSheetBody());
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1308,33 +1860,74 @@ class _SettingsViewState extends State<SettingsView> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final columns = constraints.maxWidth < 420 ? 1 : 2;
+              final columns = constraints.maxWidth < 460 ? 1 : 2;
               final width =
                   (constraints.maxWidth - 10 * (columns - 1)) / columns;
+              final tiles = <(String, IconData, String, String)>[
+                (
+                  'wallpaper',
+                  Icons.wallpaper_rounded,
+                  Loc.t('Wallpaper & theme', 'Обои и тема'),
+                  Loc.t('Pictures, timer', 'Картинки, таймер'),
+                ),
+                (
+                  'vibe',
+                  Icons.dock_rounded,
+                  Loc.t('Vibe bar', 'Вайбар'),
+                  Loc.t('Panels in the top bar', 'Панели в верхней полосе'),
+                ),
+                (
+                  'animations',
+                  Icons.animation_rounded,
+                  Loc.t('Animations & effects', 'Анимации и эффекты'),
+                  Loc.t('Speed, reduce motion', 'Скорость, меньше движения'),
+                ),
+                (
+                  'colors',
+                  Icons.palette_rounded,
+                  Loc.t('Colors & accent', 'Цвета и акцент'),
+                  Loc.t('Accent of the shell', 'Акцент оболочки'),
+                ),
+                (
+                  'window',
+                  Icons.web_asset_rounded,
+                  Loc.t('Window styling', 'Оформление окон'),
+                  Loc.t('Corner radius, borders', 'Скругление, рамки'),
+                ),
+                (
+                  'dock',
+                  Icons.view_sidebar_rounded,
+                  Loc.t('Dock & icons', 'Док и значки'),
+                  Loc.t('Icon size', 'Размер значков'),
+                ),
+                (
+                  'desktop',
+                  Icons.wb_sunny_rounded,
+                  Loc.t('Desktop & clock', 'Рабочий стол и часы'),
+                  Loc.t('Dim, seconds, text size', 'Затемнение, секунды, шрифт'),
+                ),
+                (
+                  'behavior',
+                  Icons.tune_rounded,
+                  Loc.t('System & notifications', 'Система и уведомления'),
+                  Loc.t('Snap, gaps, toasts', 'Прилипание, зазоры, уведомления'),
+                ),
+              ];
               return SingleChildScrollView(
                 child: Wrap(
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    _AppearanceTile(
-                      key: const ValueKey('appearance-tile-wallpaper'),
-                      width: width,
-                      icon: Icons.wallpaper_rounded,
-                      label: Loc.t('Wallpaper & theme', 'Обои и тема'),
-                      hint: Loc.t('Pictures, timer', 'Картинки, таймер'),
-                      onTap: () => setState(
-                          () => _appearanceDetail = 'wallpaper'),
-                    ),
-                    _AppearanceTile(
-                      key: const ValueKey('appearance-tile-vibe'),
-                      width: width,
-                      icon: Icons.dock_rounded,
-                      label: Loc.t('Vibe bar', 'Вайбар'),
-                      hint: Loc.t('Panels in the top bar',
-                          'Панели в верхней полосе'),
-                      onTap: () =>
-                          setState(() => _appearanceDetail = 'vibe'),
-                    ),
+                    for (final tile in tiles)
+                      _AppearanceTile(
+                        key: ValueKey('appearance-tile-${tile.$1}'),
+                        width: width,
+                        icon: tile.$2,
+                        label: tile.$3,
+                        hint: tile.$4,
+                        onTap: () =>
+                            setState(() => _appearanceDetail = tile.$1),
+                      ),
                   ],
                 ),
               );
@@ -1342,6 +1935,336 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _appearanceSheetBody() {
+    return switch (_appearanceDetail) {
+      'wallpaper' => _wallpaperSheet(),
+      'vibe' => _vibeSheet(),
+      'animations' => _animationsSheet(),
+      'colors' => _colorsSheet(),
+      'window' => _windowSheet(),
+      'dock' => _dockSheet(),
+      'desktop' => _desktopSheet(),
+      'behavior' => _behaviorSheet(),
+      _ => const SizedBox.shrink(),
+    };
+  }
+
+  void _previewConfig(DeConfig next) {
+    setState(() => _draft = next);
+  }
+
+  void _commitConfig(DeConfig next) {
+    setState(() => _draft = next);
+    widget.onConfig?.call(next);
+  }
+
+  Widget _configSlider({
+    required Key key,
+    required String label,
+    required double value,
+    required String text,
+    required ValueChanged<double> onPreview,
+    required VoidCallback onCommit,
+    bool enabled = true,
+  }) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.4,
+      child: IgnorePointer(
+        ignoring: !enabled,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(label,
+                    style:
+                        const TextStyle(color: Colors.white54, fontSize: 12)),
+                const Spacer(),
+                Text(text,
+                    style:
+                        const TextStyle(color: Colors.white, fontSize: 12)),
+              ],
+            ),
+            SizedBox(
+              height: 30,
+              child: WaveSlider(
+                key: key,
+                value: value,
+                onChanged: onPreview,
+                onChangeEnd: (_) => onCommit(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _configToggle({
+    required Key key,
+    required String label,
+    required String hint,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 12.5)),
+                if (hint.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Caption(hint),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          GlassToggle(key: key, value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+
+  Widget _animationsSheet() {
+    final speed = ((_draft.animationSpeed - 0.5) / 1.1).clamp(0.0, 1.0);
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _configToggle(
+            key: const ValueKey('customize-animations'),
+            label: Loc.t('Animations', 'Анимации'),
+            hint: Loc.t(
+              'Window pops, the genie, panel morphs. Turning this off makes '
+              'every action instant.',
+              'Появление окон, genie, морфы панелей. Выключение делает всё '
+              'мгновенным.',
+            ),
+            value: _draft.animationsEnabled,
+            onChanged: (on) => _commitConfig(
+              _draft.copyWith(animationsEnabled: on),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _configSlider(
+            key: const ValueKey('customize-animation-speed'),
+            label: Loc.t('Animation speed', 'Скорость анимаций'),
+            value: speed,
+            text: '${(_draft.animationSpeed * 100).round()}%',
+            enabled: _draft.animationsEnabled,
+            onPreview: (value) => _previewConfig(
+              _draft.copyWith(animationSpeed: 0.5 + value * 1.1),
+            ),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          Caption(Loc.t(
+            'Speed applies to window entrances, closes and the snap glide.',
+            'Скорость влияет на появление, закрытие и скольжение окон.',
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _colorsSheet() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            Loc.t('Accent color', 'Акцентный цвет'),
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (var i = 0; i < DeConfig.accents.length; i++)
+                GestureDetector(
+                  key: ValueKey('customize-accent-$i'),
+                  onTap: () =>
+                      _commitConfig(_draft.copyWith(accentIndex: i)),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Color(DeConfig.accents[i]),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _draft.accentIndex == i
+                            ? Colors.white
+                            : Colors.white.withValues(alpha: 0.16),
+                        width: _draft.accentIndex == i ? 3 : 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Caption(Loc.t(
+            'The accent marks the active window border and the selected rows.',
+            'Акцент подсвечивает рамку активного окна и выбранные строки.',
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _windowSheet() {
+    final radius = ((_draft.windowRadius - 8) / 18).clamp(0.0, 1.0);
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _configSlider(
+            key: const ValueKey('customize-window-radius'),
+            label: Loc.t('Corner radius', 'Скругление углов'),
+            value: radius,
+            text: '${_draft.windowRadius.round()} px',
+            onPreview: (value) => _previewConfig(
+              _draft.copyWith(windowRadius: 8 + value * 18),
+            ),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          const SizedBox(height: 8),
+          Caption(Loc.t(
+            'The radius of every in-app window. Maximized windows keep the '
+            'tight 10 px frame.',
+            'Радиус каждого окна внутри оболочки. Развёрнутые окна оставляют '
+            'узкие 10 px.',
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _dockSheet() {
+    final scale = ((_draft.dockIconScale - 0.8) / 0.6).clamp(0.0, 1.0);
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _configSlider(
+            key: const ValueKey('customize-dock-scale'),
+            label: Loc.t('Dock icon size', 'Размер значков дока'),
+            value: scale,
+            text: '${(_draft.dockIconScale * 100).round()}%',
+            onPreview: (value) => _previewConfig(
+              _draft.copyWith(dockIconScale: 0.8 + value * 0.6),
+            ),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          const SizedBox(height: 8),
+          const Center(
+            child: Icon(Icons.widgets_rounded, size: 26, color: Colors.white54),
+          ),
+          Caption(Loc.t(
+            'Running-app icons in the right dock.',
+            'Значки запущенных приложений в правом доке.',
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _desktopSheet() {
+    final dim = (_draft.wallpaperDim / 0.65).clamp(0.0, 1.0);
+    final font = ((_draft.fontScale - 0.85) / 0.35).clamp(0.0, 1.0);
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _configSlider(
+            key: const ValueKey('customize-wallpaper-dim'),
+            label: Loc.t('Wallpaper dim', 'Затемнение обоев'),
+            value: dim,
+            text: '${(_draft.wallpaperDim * 100).round()}%',
+            onPreview: (value) =>
+                _previewConfig(_draft.copyWith(wallpaperDim: value * 0.65)),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          const SizedBox(height: 8),
+          _configSlider(
+            key: const ValueKey('customize-font-scale'),
+            label: Loc.t('Text scale', 'Масштаб текста'),
+            value: font,
+            text: '${(_draft.fontScale * 100).round()}%',
+            onPreview: (value) => _previewConfig(
+              _draft.copyWith(fontScale: 0.85 + value * 0.35),
+            ),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          const SizedBox(height: 8),
+          _configToggle(
+            key: const ValueKey('customize-clock-seconds'),
+            label: Loc.t('Clock seconds', 'Секунды на часах'),
+            hint: Loc.t('Show hh:mm:ss', 'Показывать чч:мм:сс'),
+            value: _draft.clockSeconds,
+            onChanged: (on) =>
+                _commitConfig(_draft.copyWith(clockSeconds: on)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _behaviorSheet() {
+    final gap = (_draft.snapGap / 20).clamp(0.0, 1.0);
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _configToggle(
+            key: const ValueKey('customize-snap'),
+            label: Loc.t('Snap windows to edges', 'Прилипание окон к краям'),
+            hint: Loc.t(
+              'Drag a window to a screen edge to tile it; Ctrl+Alt+arrows '
+              'also snap.',
+              'Перетащи окно к краю, чтобы разложить; Ctrl+Alt+стрелки тоже '
+              'прилипают.',
+            ),
+            value: _draft.snapEnabled,
+            onChanged: (on) =>
+                _commitConfig(_draft.copyWith(snapEnabled: on)),
+          ),
+          _configSlider(
+            key: const ValueKey('customize-snap-gap'),
+            label: Loc.t('Gap between tiles', 'Зазор между плитками'),
+            value: gap,
+            text: '${_draft.snapGap.round()} px',
+            enabled: _draft.snapEnabled,
+            onPreview: (value) =>
+                _previewConfig(_draft.copyWith(snapGap: value * 20)),
+            onCommit: () => _commitConfig(_draft),
+          ),
+          const SizedBox(height: 8),
+          _configToggle(
+            key: const ValueKey('customize-notifications'),
+            label: Loc.t('Desktop notifications', 'Уведомления оболочки'),
+            hint: Loc.t(
+              'Show a toast and keep history for music, network and updates.',
+              'Показывать тост и хранить историю музыки, сети и обновлений.',
+            ),
+            value: _draft.notificationsEnabled,
+            onChanged: (on) =>
+                _commitConfig(_draft.copyWith(notificationsEnabled: on)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1561,7 +2484,7 @@ class _SettingsViewState extends State<SettingsView> {
                         ),
                         const SizedBox(width: 9),
                         Text(
-                          _waybarLabel(key),
+                          waybarLabel(key),
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 12.5),
                         ),
@@ -1612,17 +2535,17 @@ class _SettingsViewState extends State<SettingsView> {
         ),
         const SizedBox(height: 6),
         Caption(Loc.t(
-          'The bar widens when it needs room. New panels are placeholders '
-          'until their flyouts are built.',
-          'Полоса расширяется, когда нужно место. Новые панели — заготовки, '
-          'их выпадающие окна появятся позже.',
+          'The bar widens when it needs room. Every panel opens its in-shell '
+          'app: Clipboard, Emoji, Updater, Calendar or Notifications.',
+          'Полоса расширяется, когда нужно место. Каждая панель открывает '
+          'приложение внутри: буфер, эмодзи, обновления, календарь или '
+          'уведомления.',
         )),
       ],
     );
   }
 
   Widget _waybarRow(String key) {
-    const implemented = {'sound', 'bluetooth', 'wifi', 'brightness'};
     final icon = waybarMeta[key]?.$2 ?? Icons.extension_rounded;
     return Padding(
       key: ValueKey('waybar-item-$key'),
@@ -1633,15 +2556,10 @@ class _SettingsViewState extends State<SettingsView> {
           const SizedBox(width: 9),
           Expanded(
             child: Text(
-              _waybarLabel(key),
+              waybarLabel(key),
               style: const TextStyle(color: Colors.white, fontSize: 12.5),
             ),
           ),
-          if (!implemented.contains(key))
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Caption(Loc.t('placeholder', 'заготовка'), size: 9.5),
-            ),
           IconButton(
             key: ValueKey('waybar-remove-$key'),
             onPressed: widget.onWaybarItems == null
@@ -1661,12 +2579,6 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  static String _waybarLabel(String key) {
-    final meta = waybarMetaRu[key];
-    if (meta != null) return Loc.t(meta.$2, meta.$3);
-    return waybarMeta[key]?.$1 ?? key;
-  }
-
   // ---- updates --------------------------------------------------------------
 
   Widget _updatesPane(SettingsItem item) {
@@ -1680,31 +2592,15 @@ class _SettingsViewState extends State<SettingsView> {
             key: const ValueKey('updates-expa'),
             title: Loc.t('EXpaDesktop updates', 'Обновления EXpaDesktop'),
             caption: Loc.t(
-              'Open the latest release page and see what changed.',
-              'Открыть страницу последнего релиза и посмотреть изменения.',
+              'Open the in-shell Updater: it compares this build with the '
+              'latest GitHub release and main commit, shows both changelogs '
+              'and can rebuild and restart the app.',
+              'Открой встроенное обновление: оно сравнит эту сборку с '
+              'последним релизом и коммитом main на GitHub, покажет изменения '
+              'и сможет пересобрать и перезапустить приложение.',
             ),
-            button: Loc.t('Check', 'Проверить'),
-            onTap: () {
-              final open = widget.onOpenUpdates;
-              if (open != null) {
-                unawaited(open(
-                    'https://github.com/krutkrutaya/EXpaDesktop/releases/latest'));
-              }
-            },
-          ),
-          const SizedBox(height: 10),
-          _updateCard(
-            key: const ValueKey('updates-windows'),
-            title: Loc.t('Windows Update', 'Обновление Windows'),
-            caption: Loc.t(
-              'The system update page, exactly where Windows keeps it.',
-              'Системная страница обновлений, там, где её держит Windows.',
-            ),
-            button: Loc.t('Open', 'Открыть'),
-            onTap: () {
-              final open = widget.onOpenUpdates;
-              if (open != null) unawaited(open('ms-settings:windowsupdate'));
-            },
+            button: Loc.t('Open Updater', 'Открыть Updater'),
+            onTap: () => widget.onOpenUpdater?.call(),
           ),
         ],
       ),
@@ -1747,36 +2643,6 @@ class _SettingsViewState extends State<SettingsView> {
           PillButton(label: button, onTap: onTap),
         ],
       ),
-    );
-  }
-
-  // ---- generic Windows pane -------------------------------------------------
-
-  Widget _windowsPane(SettingsItem item) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _paneTitle(item),
-        const SizedBox(height: 16),
-        Caption(Loc.t(
-          'This setting lives in Windows Settings. The shell opens the right '
-          'page; the system does the rest.',
-          'Эта настройка живёт в Windows. Оболочка открывает нужную страницу, '
-          'остальное делает система.',
-        )),
-        const SizedBox(height: 16),
-        if (item.uri != null)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: PillButton(
-              key: const ValueKey('settings-open-windows'),
-              label: Loc.t('Open in Windows', 'Открыть в Windows'),
-              icon: Icons.open_in_new_rounded,
-              onTap: () => unawaited(openSettingsPage(item.uri!)),
-            ),
-          ),
-        const Spacer(),
-      ],
     );
   }
 

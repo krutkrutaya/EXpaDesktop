@@ -31,19 +31,31 @@ minimize and close. Nothing launches a second Windows window.
 | | |
 |---|---|
 | Calculator | a real four-function calculator with keyboard input |
-| Notepad | autosaves to `%APPDATA%\EXpaDesktop\notes.txt` |
-| Files | a directory browser with text and image preview inside the window |
+| Notepad | autosaves to `%APPDATA%\EXpaDesktop\notes.txt`; opens text files from Files and saves edits back to them |
+| Files | a directory browser with text and image preview; double-click follows the desktop's file associations |
 | Paint | a stroke canvas with colours, eraser, undo and PNG export to Pictures |
 | Snip | captures the shell itself, previews and saves the shot |
-| Tasks | a real to-do list, not Task Manager |
-| Browser | WebView2 composited into the window: address bar, back/forward, start page |
+| Tasks | a real to-do list, persisted to `%APPDATA%\EXpaDesktop\tasks.json` |
+| Browser | WebView2 composited into the window: tabs, bookmarks, address bar, back/forward, start page |
 | Musics | the player as a window: every track, transport, seek bar, beat cover |
 | Terminal | runs `cmd` lines in the window and prints the output |
-| Settings | the shell's own settings, now a window like every other app |
+| Configs | live customization hub: appearance, snapping, the Vibe bar's panels, open windows, prefs path |
+| Settings | every pane works in-app: pointer/keyboard, drives, associations, notifications, multitasking, lock screen |
+| Clipboard | watches the Windows clipboard, keeps a searchable history, pins and copies entries back |
+| Notifications | the in-shell notification center, with unread state and a waybar badge |
+| Calendar | a real Monday-first month grid with previous/next/today |
+| Emoji | a searchable picker that copies through the system clipboard |
+| Updater | compares the build with GitHub, shows release/commit changelogs and rebuilds/restarts |
 
 - **Entrance**: a 300 ms spring — the window scales up, fades in and slides
   out of the right dock; closing pulls it back the same way. Minimizing leaves
   it on the dock's running-window strip.
+- **EXWM** (`lib/exwm/`) owns the windows: one manager per workspace, focus
+  stack, snapping to halves/quarters/maximize, drag-edge snapping and
+  `Ctrl+Alt+arrows`/`Ctrl+Alt+1..4`. **EXPA** (`lib/expa/`) owns the desktop
+  environment: `DeConfig`, the theme, notifications, clipboard history, file
+  associations, versioning and the updater bridge. Both have their own mock
+  suites (`test/exwm_check.dart`, `test/expa_check.dart`).
 - **Per-desktop windows**: every in-app desktop keeps its own set of windows,
   so switching desktops really switches the work, not just the wallpaper.
 - **Drag** by the title bar, **resize** from the corner, **double-click** the
@@ -321,9 +333,9 @@ flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desk
 The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
 `audioplayers_windows_plugin.dll`, `flutter_inappwebview_windows_plugin.dll`,
 `WebView2Loader.dll`, `brightness.dll`, `music_scan.dll`, `sysctl.dll` (when
-built) and `data\flutter_assets\`. The Windows runner lives in
-`ExDesktop/windows/` (generated with `flutter create --platforms=windows .`
-and committed, so a fresh clone builds).
+built), `updater.exe` (when built) and `data\flutter_assets\`. The Windows
+runner lives in `ExDesktop/windows/` (generated with `flutter create
+--platforms=windows .` and committed, so a fresh clone builds).
 
 The Browser window needs the **Microsoft Edge WebView2 runtime**, which ships
 with Windows 10/11 and with Edge; if it is missing the window shows its start
@@ -334,8 +346,8 @@ page and says so instead of breaking.
 subdirectories: C++/WinRT still includes `<experimental/coroutine>`, and MSVC
 14.51 turned that into a hard error. It is Microsoft's documented escape hatch.
 
-**Nothing binary is committed.** There are three optional Rust libraries; all
-are built once with a Rust toolchain:
+**Nothing binary is committed.** There are four optional Rust binaries/libraries;
+all are built once with a Rust toolchain:
 
 ```bash
 cd ExDesktop/lib/rust
@@ -349,8 +361,20 @@ cp target/release/music_scan.dll .
 cd ../sysctl
 cargo build --release
 cp target/release/sysctl.dll .
-cargo test                                # 6 pure unit tests
+cargo test                                # 9 pure unit tests
+
+cd ../updater
+cargo build --release
+cp target/release/updater.exe .
+cargo test                                # 5 version/plan unit tests
 ```
+
+- **updater.exe** — the release-the-app helper: `git fetch`, check out the
+  chosen release tag or pull `main`, refuse a dirty tree, run
+  `flutter build windows --release`, relaunch the app, and relaunch the old
+  build if the update fails. `--plan` prints the exact commands. The in-shell
+  Updater passes the repo path, mode and target; the GitHub check/changelog is
+  Dart (`lib/expa/update_service.dart`).
 
 - **brightness.dll** — DDC/CI + gamma ramps. Without it the brightness sliders
   do nothing: `lib/main.dart` tries several paths and fails soft.
@@ -359,28 +383,51 @@ cargo test                                # 6 pure unit tests
   covers. Without it the shell falls back to the pure-Dart scanner (correct,
   just slower on a big library).
 - **sysctl.dll** — master volume + per-app WASAPI sessions, Wi-Fi scan/join
-  through the WLAN API, the monitor's real modes, and the DST-aware time-zone
-  table. Every call fails soft; without it the settings panes stay readable but
-  cannot touch the machine, and `native_check.dart` still validates the JSON.
+  through the WLAN API, the monitor's real modes, the DST-aware time-zone
+  table, the Windows clipboard (read/write/sequence) and the pointer/keyboard
+  `SystemParametersInfo` settings. Every call fails soft; without it the
+  settings panes stay readable but cannot touch the machine, and
+  `native_check.dart` still validates the JSON.
 
 `flutter build windows` copies each DLL next to the exe when it is present and
 prints a status line when it is not.
+
+## 🏷️ Versioning & updates
+
+The build version lives in a file named **`version_x.y.z.txt`**
+(`x` = release, `y` = large change, `z` = patch/minor). The file name is the
+source of truth; the body carries the commit the build came from:
+
+```
+version=1.0.0
+commit=8b7cde7
+```
+
+`lib/expa/version.dart` parses it, `UpdateService` compares it with
+`GET /repos/krutkrutaya/EXpaDesktop/releases/latest` and `/commits/main`, and
+the Updater window shows both changelogs. “Update to release” passes the real
+tag (e.g. `v1.1.0`); “Update to main” pulls the latest commit. The Rust
+`updater.exe` double-checks the version file, refuses a downgrade or a dirty
+tree, builds and relaunches. To bump the version, rename the file and update
+`versionAsset`/`appVersion` together.
 
 ## 🧪 Tests
 
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1373 checks** with the optional Rust DLLs built (1364 without), plus
-**72 widget tests**.
+**1550 checks** with the optional Rust DLLs built, plus **83 widget tests**,
+**9 sysctl Rust tests** and **5 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 72 widget tests
+flutter test                                 # 83 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1373 mock checks
+dart run test/mock_all.dart                  # 1550 mock checks
+dart run test/exwm_check.dart                # window manager + snap: 42 checks
+dart run test/expa_check.dart                # config, notifications, version: 103 checks
 dart run test/desktop_check.dart             # windows: 118 checks
-dart run test/apps_check.dart                # app models: 150 checks
+dart run test/apps_check.dart                # app models: 177 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
 dart run test/library_check.dart             # import, WAV, Rust JSON: 69 checks
 dart run test/native_check.dart              # audio/Wi-Fi/display/zone parsers: 39 checks

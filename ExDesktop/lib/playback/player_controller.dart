@@ -51,10 +51,24 @@ class AudioPlayersEngine implements AudioEngine {
   final AudioPlayer _player = AudioPlayer();
 
   @override
-  Future<void> playAsset(String asset) => _player.play(AssetSource(asset));
+  Future<void> playAsset(String asset) => _start(AssetSource(asset));
 
   @override
-  Future<void> playFile(String path) => _player.play(DeviceFileSource(path));
+  Future<void> playFile(String path) => _start(DeviceFileSource(path));
+
+  /// Always starts at the very beginning. `play()` alone reused the previous
+  /// source's position on some Windows builds; stopping first and seeking to
+  /// zero makes a track switch deterministic (the reported bug).
+  Future<void> _start(Source source) async {
+    await _player.stop();
+    await _player.play(source);
+    try {
+      await _player.seek(Duration.zero);
+    } catch (_) {
+      // A decoder can refuse a seek before it is ready; playback still starts
+      // at zero from play().
+    }
+  }
 
   @override
   Future<void> pause() => _player.pause();
@@ -133,6 +147,11 @@ class PlayerController extends ChangeNotifier {
   /// bar while the track was only selected, not playing yet).
   double? _pendingSeek;
 
+  /// Position events that arrive right after a switch can belong to the old
+  /// track (Media Foundation delivers a final position from the previous
+  /// source). While this deadline is in the future the clock stays at 0:00.
+  DateTime? _settlePositionsUntil;
+
   List<Track> get tracks => List<Track>.unmodifiable(_tracks);
   Map<String, Uint8List> get covers => _covers;
   int get index => _index;
@@ -169,6 +188,7 @@ class PlayerController extends ChangeNotifier {
     _index = wanted;
     _isLoaded = false;
     _pendingSeek = null;
+    _settlePositionsUntil = DateTime.now().add(const Duration(milliseconds: 350));
     _duration = Duration.zero;
     _setProgress(0);
     _currentTime = '0:00';
@@ -277,6 +297,13 @@ class PlayerController extends ChangeNotifier {
     } else {
       await _engine.playAsset('music/${current.file}');
     }
+    // Belt and braces: even if the engine's source switch kept a position,
+    // reset it explicitly and keep the clock at zero while the decoder
+    // settles.
+    try {
+      await _engine.seek(Duration.zero);
+    } catch (_) {}
+    _settlePositionsUntil = DateTime.now().add(const Duration(milliseconds: 350));
     _isLoaded = true;
     unawaited(_fadeIn(token));
   }
@@ -294,18 +321,29 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _onPosition(Duration position) {
+    final settling = _settlePositionsUntil != null &&
+        DateTime.now().isBefore(_settlePositionsUntil!);
+    // A position past the new track's duration is a stale event from the
+    // previous source even after the settle window.
+    final stale = _duration > Duration.zero &&
+        position > _duration + const Duration(milliseconds: 500);
+    final effective = (settling || stale) ? Duration.zero : position;
     if (_duration.inMilliseconds > 0) {
       _setProgress(
-        (position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0),
+        (effective.inMilliseconds / _duration.inMilliseconds)
+            .clamp(0.0, 1.0),
       );
     }
-    _currentTime = formatPlaybackTime(position);
+    _currentTime = formatPlaybackTime(effective);
     time.value = _currentTime;
   }
 
   void _onDuration(Duration duration) {
     if (duration <= Duration.zero) return;
     _duration = duration;
+    // The decoder has reported the new source: from here on, positions are
+    // trustworthy again.
+    _settlePositionsUntil = null;
     _totalDuration = formatPlaybackTime(duration);
     final current = track;
     if (current != null) {

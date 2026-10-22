@@ -118,3 +118,123 @@ String picturesDirectory() {
   if (pictures.existsSync()) return pictures.path;
   return Directory.systemTemp.path;
 }
+/// One browser tab. The window keeps one WebView and points it at the
+/// selected tab's URL; the model remembers the pages and titles.
+class BrowserTab {
+  final int id;
+  String url;
+  String title;
+
+  BrowserTab({required this.id, required this.url, this.title = ''});
+
+  String get host {
+    try {
+      final uri = Uri.parse(url);
+      return uri.host.isEmpty ? url : uri.host;
+    } catch (_) {
+      return url;
+    }
+  }
+
+  Map<String, Object?> toJson() => {'id': id, 'url': url, 'title': title};
+
+  static BrowserTab? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final url = '${json['url'] ?? ''}';
+    if (url.isEmpty) return null;
+    return BrowserTab(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      url: url,
+      title: '${json['title'] ?? ''}',
+    );
+  }
+}
+
+class BrowserTabs {
+  BrowserTabs({String home = 'https://duckduckgo.com'}) {
+    add(url: home, select: true);
+  }
+
+  final List<BrowserTab> _tabs = [];
+  final Set<String> bookmarks = {};
+  int _active = 0;
+  int _nextId = 1;
+
+  List<BrowserTab> get tabs => List.unmodifiable(_tabs);
+  BrowserTab get active => _tabs[_active.clamp(0, _tabs.length - 1)];
+  int get count => _tabs.length;
+  bool get canClose => _tabs.length > 1;
+
+  BrowserTab add({String? url, String? title, bool select = true}) {
+    final tab = BrowserTab(
+      id: _nextId++,
+      url: url ?? 'about:blank',
+      title: title ?? '',
+    );
+    _tabs.add(tab);
+    if (select) _active = _tabs.length - 1;
+    return tab;
+  }
+
+  /// Closes a tab unless it is the last one. Returns true when the active tab
+  /// changed (the window must load the new active URL).
+  bool close(int id) {
+    if (_tabs.length <= 1) return false;
+    final index = _tabs.indexWhere((tab) => tab.id == id);
+    if (index < 0) return false;
+    final wasActive = index == _active;
+    _tabs.removeAt(index);
+    if (index < _active) _active--;
+    if (_active >= _tabs.length) _active = _tabs.length - 1;
+    return wasActive;
+  }
+
+  void select(int id) {
+    final index = _tabs.indexWhere((tab) => tab.id == id);
+    if (index >= 0) _active = index;
+  }
+
+  void update({String? url, String? title}) {
+    final tab = active;
+    if (url != null && url.isNotEmpty) tab.url = url;
+    if (title != null) tab.title = title;
+  }
+
+  bool isBookmarked(String url) => bookmarks.contains(url);
+
+  bool toggleBookmark(String url) {
+    if (url.isEmpty || url == 'about:blank') return false;
+    if (!bookmarks.remove(url)) bookmarks.add(url);
+    return bookmarks.contains(url);
+  }
+
+  Map<String, Object?> toJson() => {
+        'tabs': [for (final tab in _tabs) tab.toJson()],
+        'active': _active,
+        'bookmarks': bookmarks.toList(),
+      };
+
+  static BrowserTabs fromJson(Object? json,
+      {String home = 'https://duckduckgo.com'}) {
+    final tabs = BrowserTabs(home: home);
+    if (json is! Map) return tabs;
+    tabs._tabs.clear();
+    final raw = json['tabs'];
+    if (raw is List) {
+      for (final item in raw) {
+        final tab = BrowserTab.fromJson(item);
+        if (tab != null) tabs._tabs.add(tab);
+      }
+    }
+    if (tabs._tabs.isEmpty) tabs.add(url: home);
+    tabs._active =
+        ((json['active'] as num?)?.toInt() ?? 0).clamp(0, tabs._tabs.length - 1);
+    tabs._nextId =
+        tabs._tabs.map((tab) => tab.id).fold(0, (a, b) => a > b ? a : b) + 1;
+    final marks = json['bookmarks'];
+    if (marks is List) {
+      tabs.bookmarks.addAll(marks.map((mark) => '$mark'));
+    }
+    return tabs;
+  }
+}

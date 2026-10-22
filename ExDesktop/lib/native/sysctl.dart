@@ -20,8 +20,12 @@ typedef _F32VoidNative = Double Function();
 typedef _F32VoidDart = double Function();
 typedef _I32F32Native = Int32 Function(Double);
 typedef _I32F32Dart = int Function(double);
+typedef _I32I32Native = Int32 Function(Int32);
+typedef _I32I32Dart = int Function(int);
 typedef _I32VoidNative = Int32 Function();
 typedef _I32VoidDart = int Function();
+typedef _U32VoidNative = Uint32 Function();
+typedef _U32VoidDart = int Function();
 typedef _I32BoolNative = Int32 Function(Int32);
 typedef _I32BoolDart = int Function(int);
 typedef _StrVoidNative = Pointer<Utf8> Function();
@@ -47,6 +51,16 @@ class _Bindings {
   final _StrVoidDart sessionsJson;
   final _I32PidF32Dart sessionVolume;
   final _I32PidBoolDart sessionMute;
+  final _I32VoidDart mouseSpeedGet;
+  final _I32I32Dart mouseSpeedSet;
+  final _I32VoidDart mouseSwapGet;
+  final _I32I32Dart mouseSwapSet;
+  final _I32VoidDart wheelLinesGet;
+  final _I32I32Dart wheelLinesSet;
+  final _I32VoidDart keyboardDelayGet;
+  final _I32I32Dart keyboardDelaySet;
+  final _I32VoidDart keyboardSpeedGet;
+  final _I32I32Dart keyboardSpeedSet;
   final _StrVoidDart wifiJson;
   final _ConnectDart wifiConnect;
   final _I32VoidDart wifiDisconnect;
@@ -54,6 +68,10 @@ class _Bindings {
   final _DisplayDart displayApply;
   final _StrVoidDart timezonesJson;
   final _I32StrDart timezoneOffset;
+  final _U32VoidDart clipboardSequence;
+  final _StrVoidDart clipboardText;
+  final _I32StrDart clipboardSet;
+  final _I32VoidDart clipboardClear;
   final _FreeDart freeString;
 
   _Bindings(DynamicLibrary library)
@@ -73,6 +91,26 @@ class _Bindings {
         sessionMute = library
             .lookupFunction<_I32PidBoolNative, _I32PidBoolDart>(
                 'audio_session_set_mute'),
+        mouseSpeedGet = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('mouse_speed_get'),
+        mouseSpeedSet = library
+            .lookupFunction<_I32I32Native, _I32I32Dart>('mouse_speed_set'),
+        mouseSwapGet = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('mouse_swap_get'),
+        mouseSwapSet = library
+            .lookupFunction<_I32I32Native, _I32I32Dart>('mouse_swap_set'),
+        wheelLinesGet = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('wheel_lines_get'),
+        wheelLinesSet = library
+            .lookupFunction<_I32I32Native, _I32I32Dart>('wheel_lines_set'),
+        keyboardDelayGet = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('keyboard_delay_get'),
+        keyboardDelaySet = library
+            .lookupFunction<_I32I32Native, _I32I32Dart>('keyboard_delay_set'),
+        keyboardSpeedGet = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('keyboard_speed_get'),
+        keyboardSpeedSet = library
+            .lookupFunction<_I32I32Native, _I32I32Dart>('keyboard_speed_set'),
         wifiJson = library.lookupFunction<_StrVoidNative, _StrVoidDart>(
             'wifi_networks_json'),
         wifiConnect = library
@@ -87,6 +125,14 @@ class _Bindings {
             'timezones_json'),
         timezoneOffset = library
             .lookupFunction<_I32StrNative, _I32StrDart>('timezone_offset'),
+        clipboardSequence = library
+            .lookupFunction<_U32VoidNative, _U32VoidDart>('clipboard_sequence'),
+        clipboardText = library
+            .lookupFunction<_StrVoidNative, _StrVoidDart>('clipboard_text'),
+        clipboardSet = library
+            .lookupFunction<_I32StrNative, _I32StrDart>('clipboard_set'),
+        clipboardClear = library
+            .lookupFunction<_I32VoidNative, _I32VoidDart>('clipboard_clear'),
         freeString = library
             .lookupFunction<_FreeNative, _FreeDart>('free_string');
 }
@@ -491,5 +537,107 @@ abstract final class SysCtl {
     } finally {
       malloc.free(pointer);
     }
+  }
+
+  static int? get mouseSpeed {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final value = bindings.mouseSpeedGet();
+    return value < 0 ? null : value;
+  }
+
+  static bool setMouseSpeed(int value) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.mouseSpeedSet(value.clamp(1, 20)) != 0;
+  }
+
+  static bool? get mouseSwap {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final value = bindings.mouseSwapGet();
+    return value < 0 ? null : value != 0;
+  }
+
+  static bool setMouseSwap(bool value) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.mouseSwapSet(value ? 1 : 0) != 0;
+  }
+
+  static int? get wheelLines {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final value = bindings.wheelLinesGet();
+    return value < 0 ? null : value;
+  }
+
+  static bool setWheelLines(int value) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.wheelLinesSet(value.clamp(1, 100)) != 0;
+  }
+
+  static int? get keyboardDelay {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final value = bindings.keyboardDelayGet();
+    return value < 0 ? null : value;
+  }
+
+  static bool setKeyboardDelay(int value) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.keyboardDelaySet(value.clamp(0, 3)) != 0;
+  }
+
+  static int? get keyboardSpeed {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final value = bindings.keyboardSpeedGet();
+    return value < 0 ? null : value;
+  }
+
+  static bool setKeyboardSpeed(int value) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.keyboardSpeedSet(value.clamp(0, 31)) != 0;
+  }
+
+  /// Changes whenever anything writes to the Windows clipboard. Polling this
+  /// is much cheaper than reading the text every tick.
+  static int get clipboardSequence {
+    final bindings = _load();
+    if (bindings == null) return 0;
+    return bindings.clipboardSequence();
+  }
+
+  static String? get clipboardText {
+    final bindings = _load();
+    if (bindings == null) return null;
+    final pointer = bindings.clipboardText();
+    if (pointer == nullptr) return null;
+    try {
+      return pointer.toDartString();
+    } finally {
+      bindings.freeString(pointer);
+    }
+  }
+
+  static bool setClipboardText(String text) {
+    final bindings = _load();
+    if (bindings == null) return false;
+    final pointer = text.toNativeUtf8();
+    try {
+      return bindings.clipboardSet(pointer) != 0;
+    } finally {
+      malloc.free(pointer);
+    }
+  }
+
+  static bool clearClipboard() {
+    final bindings = _load();
+    if (bindings == null) return false;
+    return bindings.clipboardClear() != 0;
   }
 }

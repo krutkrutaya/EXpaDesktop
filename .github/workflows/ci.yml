@@ -34,3 +34,8 @@ jobs:
 
       - name: Mock suites
         run: dart run test/mock_all.dart
+
+      - name: Rust tests
+        run: |
+          cargo test --manifest-path lib/rust/sysctl/Cargo.toml
+          cargo test --manifest-path lib/rust/updater/Cargo.toml

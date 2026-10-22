@@ -201,6 +201,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   });
 
+  _playerTest('switching tracks starts at 0:00 and rejects the old timecode',
+      (tester, player, engine) async {
+    player.setTracks(_tracks, const {});
+    await player.play();
+    await tester.pump(const Duration(milliseconds: 16));
+    engine.emitDuration(const Duration(seconds: 120));
+    await tester.pump();
+    engine.emitPosition(const Duration(seconds: 90));
+    await tester.pump();
+    expect(player.currentTime, '1:30');
+
+    await player.select(2, autoplay: true);
+    expect(player.currentTime, '0:00');
+    expect(player.progress.value, 0.0);
+    expect(engine.calls.where((call) => call == 'seek'), isNotEmpty);
+
+    // A late position from the previous source must not move the clock.
+    engine.emitPosition(const Duration(seconds: 90));
+    await tester.pump();
+    expect(player.currentTime, '0:00');
+
+    // With the new duration in, an impossible position is stale too.
+    engine.emitDuration(const Duration(seconds: 30));
+    await tester.pump();
+    engine.emitPosition(const Duration(seconds: 90));
+    await tester.pump();
+    expect(player.currentTime, '0:00');
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
   _playerTest('the beat scale stays subtle and pauses flat',
       (tester, player, engine) async {
 

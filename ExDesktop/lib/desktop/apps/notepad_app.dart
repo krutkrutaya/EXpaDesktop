@@ -1,6 +1,7 @@
 // The Notepad window: autosaving notes, no Save dialog in the way.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -11,7 +12,10 @@ class NotepadApp extends StatefulWidget {
   /// Injectable for the tests; the default writes to %APPDATA%.
   final NotepadStore? store;
 
-  const NotepadApp({super.key, this.store});
+  /// A file the shell wants this window to edit (Files → associations).
+  final ValueNotifier<String?>? openPath;
+
+  const NotepadApp({super.key, this.store, this.openPath});
 
   @override
   State<NotepadApp> createState() => _NotepadAppState();
@@ -24,16 +28,48 @@ class _NotepadAppState extends State<NotepadApp> {
   bool _dirty = false;
   String _status = 'Loading…';
   bool _loaded = false;
+  String? _filePath;
 
   @override
   void initState() {
     super.initState();
+    widget.openPath?.addListener(_onOpenPath);
     unawaited(_load());
+    _consumeOpenPath();
+  }
+
+  void _onOpenPath() {
+    if (mounted) _consumeOpenPath();
+  }
+
+  void _consumeOpenPath() {
+    final path = widget.openPath?.value;
+    if (path == null || path.isEmpty) return;
+    widget.openPath?.value = null;
+    unawaited(_openFile(path));
+  }
+
+  Future<void> _openFile(String path) async {
+    try {
+      final content = await File(path).readAsString();
+      if (!mounted) return;
+      setState(() {
+        _filePath = path;
+        _text.text = content;
+        _loaded = true;
+        _dirty = false;
+        _status = 'Opened ';
+      });
+    } catch (_) {
+      if (mounted) setState(() => _status = 'Could not open the file');
+    }
   }
 
   Future<void> _load() async {
     final content = await _store.load();
     if (!mounted) return;
+    // A file may have been opened while the store was reading; the file wins.
+    if (_filePath != null) return;
     setState(() {
       _text.text = content;
       _loaded = true;
@@ -80,7 +116,15 @@ class _NotepadAppState extends State<NotepadApp> {
   void dispose() {
     _debounce?.cancel();
     // Closing the window should not lose the last keystrokes.
-    if (_dirty && _loaded) unawaited(_store.save(_text.text));
+    widget.openPath?.removeListener(_onOpenPath);
+    if (_dirty && _loaded) {
+      final file = _filePath;
+      if (file != null) {
+        unawaited(File(file).writeAsString(_text.text));
+      } else {
+        unawaited(_store.save(_text.text));
+      }
+    }
     _text.dispose();
     super.dispose();
   }

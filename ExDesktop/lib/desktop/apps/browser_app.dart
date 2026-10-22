@@ -9,6 +9,7 @@
 // `flutter test`, and the window then shows the start page with the resolved
 // URL, which is what a person sees if the runtime is missing.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -46,9 +47,13 @@ bool _detectWebView() {
 class BrowserApp extends StatefulWidget {
   final String homeUrl;
 
+  /// A URL the shell wants this window to open (Files associations).
+  final ValueNotifier<String?>? openUrl;
+
   const BrowserApp({
     super.key,
     this.homeUrl = 'https://duckduckgo.com',
+    this.openUrl,
   });
 
   @override
@@ -56,6 +61,7 @@ class BrowserApp extends StatefulWidget {
 }
 
 class _BrowserAppState extends State<BrowserApp> {
+  late final BrowserTabs _tabs;
   final BrowserHistory _history = BrowserHistory();
   final TextEditingController _address = TextEditingController();
   final FocusNode _addressFocus = FocusNode(debugLabel: 'browser-address');
@@ -73,9 +79,23 @@ class _BrowserAppState extends State<BrowserApp> {
   @override
   void initState() {
     super.initState();
-    _current = widget.homeUrl;
+    _tabs = BrowserTabs(home: widget.homeUrl);
+    _current = _tabs.active.url;
     _history.push(_current);
     _address.text = BrowserInput.display(_current);
+    widget.openUrl?.addListener(_onOpenUrl);
+    _consumeOpenUrl();
+  }
+
+  void _onOpenUrl() {
+    if (mounted) _consumeOpenUrl();
+  }
+
+  void _consumeOpenUrl() {
+    final url = widget.openUrl?.value;
+    if (url == null || url.isEmpty) return;
+    widget.openUrl?.value = null;
+    unawaited(_open(url));
   }
 
   @override
@@ -95,6 +115,7 @@ class _BrowserAppState extends State<BrowserApp> {
   Future<void> _open(String input) async {
     final target = BrowserInput.resolve(input);
     _current = target.uri;
+    _tabs.update(url: target.uri, title: BrowserInput.display(target.uri));
     _history.push(target.uri);
     _address.text = BrowserInput.display(target.uri);
     _addressFocus.unfocus();
@@ -146,10 +167,46 @@ class _BrowserAppState extends State<BrowserApp> {
   void _onNavigated(String? url) {
     if (url == null || url.isEmpty) return;
     _current = url;
+    _tabs.update(url: url);
     _history.push(url);
     _address.text = BrowserInput.display(url);
     if (mounted) setState(() {});
     _syncButtons();
+  }
+
+  Future<void> _selectTab(int id) async {
+    _tabs.select(id);
+    _current = _tabs.active.url;
+    _address.text = BrowserInput.display(_current);
+    _history.push(_current);
+    setState(() {});
+    await _load(_current);
+  }
+
+  Future<void> _newTab() async {
+    _tabs.add(url: widget.homeUrl);
+    _current = _tabs.active.url;
+    _address.text = BrowserInput.display(_current);
+    _history.push(_current);
+    setState(() {});
+    await _load(_current);
+  }
+
+  Future<void> _closeTab(int id) async {
+    final changed = _tabs.close(id);
+    if (!mounted) return;
+    if (changed) {
+      _current = _tabs.active.url;
+      _address.text = BrowserInput.display(_current);
+      setState(() {});
+      await _load(_current);
+    } else {
+      setState(() {});
+    }
+  }
+
+  void _toggleBookmark() {
+    setState(() => _tabs.toggleBookmark(_current));
   }
 
   @override
@@ -158,6 +215,8 @@ class _BrowserAppState extends State<BrowserApp> {
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       child: Column(
         children: [
+          _tabStrip(),
+          const SizedBox(height: 5),
           Row(
             children: [
               HoverIcon(
@@ -220,12 +279,26 @@ class _BrowserAppState extends State<BrowserApp> {
                         tooltip: 'Go',
                         onTap: () => _open(_address.text),
                       ),
+                      HoverIcon(
+                        key: const ValueKey('browser-bookmark'),
+                        icon: _tabs.isBookmarked(_current)
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                        tooltip: _tabs.isBookmarked(_current)
+                            ? 'Remove bookmark'
+                            : 'Bookmark this page',
+                        onTap: _toggleBookmark,
+                      ),
                     ],
                   ),
                 ),
               ),
             ],
           ),
+          if (_tabs.bookmarks.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _bookmarkStrip(),
+          ],
           const SizedBox(height: 6),
           // A hairline progress bar: the page is loading without a spinner
           // taking over the content.
@@ -244,6 +317,127 @@ class _BrowserAppState extends State<BrowserApp> {
           ),
           const SizedBox(height: 6),
           Expanded(child: _content()),
+        ],
+      ),
+    );
+  }
+
+  Widget _tabStrip() {
+    return SizedBox(
+      height: 28,
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _tabs.count,
+              separatorBuilder: (_, __) => const SizedBox(width: 4),
+              itemBuilder: (context, index) {
+                final tab = _tabs.tabs[index];
+                final active = _tabs.active.id == tab.id;
+                return GestureDetector(
+                  key: ValueKey('browser-tab-${tab.id}'),
+                  onTap: () => _selectTab(tab.id),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 154,
+                    padding: const EdgeInsets.symmetric(horizontal: 9),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? Colors.white.withValues(alpha: 0.14)
+                          : Colors.white.withValues(alpha: 0.04),
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(
+                        color: Colors.white.withValues(
+                            alpha: active ? 0.18 : 0.05),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _loading && active
+                              ? Icons.public
+                              : Icons.tab_rounded,
+                          size: 12,
+                          color: active ? Colors.white : Colors.white38,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            tab.title.isEmpty ? tab.host : tab.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: active ? Colors.white : Colors.white54,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ),
+                        if (_tabs.canClose)
+                          GestureDetector(
+                            key: ValueKey('browser-tab-close-${tab.id}'),
+                            onTap: () => _closeTab(tab.id),
+                            child: const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(Icons.close_rounded,
+                                  size: 12, color: Colors.white38),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          HoverIcon(
+            key: const ValueKey('browser-new-tab'),
+            icon: Icons.add_rounded,
+            tooltip: 'New tab',
+            onTap: _newTab,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bookmarkStrip() {
+    return SizedBox(
+      height: 23,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          for (final url in _tabs.bookmarks)
+            Padding(
+              padding: const EdgeInsets.only(right: 5),
+              child: GestureDetector(
+                key: ValueKey('browser-bookmark-$url'),
+                onTap: () => _open(url),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.star_rounded,
+                          size: 11, color: Color(0xFFFFD36E)),
+                      const SizedBox(width: 4),
+                      Text(
+                        Uri.tryParse(url)?.host.isNotEmpty == true
+                            ? Uri.parse(url).host
+                            : url,
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -285,6 +479,11 @@ class _BrowserAppState extends State<BrowserApp> {
               onLoadStop: (controller, url) {
                 if (url != null) _onNavigated(url.toString());
                 if (mounted) setState(() => _loading = false);
+                _controller?.getTitle().then((title) {
+                  if (!mounted || title == null) return;
+                  _tabs.update(title: title);
+                  setState(() {});
+                });
                 _controller?.canGoBack().then((value) {
                   if (!mounted) return;
                   setState(() => _canGoBack = value);

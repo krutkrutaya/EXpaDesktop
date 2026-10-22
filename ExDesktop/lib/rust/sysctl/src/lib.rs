@@ -12,8 +12,10 @@
 // this, and every function fails soft when the DLL is absent.
 
 mod audio;
+mod clipboard;
 mod display;
 mod json;
+mod system;
 mod timezones;
 mod wifi;
 
@@ -132,6 +134,83 @@ pub extern "C" fn display_apply(width: u32, height: u32, hz: u32, orientation: i
         None
     };
     display::apply(width, height, hz, orientation)
+}
+
+// ---- input settings ---------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn mouse_speed_get() -> i32 {
+    system::mouse_speed_get()
+}
+
+#[no_mangle]
+pub extern "C" fn mouse_speed_set(value: i32) -> i32 {
+    system::mouse_speed_set(value)
+}
+
+#[no_mangle]
+pub extern "C" fn mouse_swap_get() -> i32 {
+    system::mouse_swap_get()
+}
+
+#[no_mangle]
+pub extern "C" fn mouse_swap_set(value: i32) -> i32 {
+    system::mouse_swap_set(value != 0)
+}
+
+#[no_mangle]
+pub extern "C" fn wheel_lines_get() -> i32 {
+    system::wheel_lines_get()
+}
+
+#[no_mangle]
+pub extern "C" fn wheel_lines_set(value: i32) -> i32 {
+    system::wheel_lines_set(value)
+}
+
+#[no_mangle]
+pub extern "C" fn keyboard_delay_get() -> i32 {
+    system::keyboard_delay_get()
+}
+
+#[no_mangle]
+pub extern "C" fn keyboard_delay_set(value: i32) -> i32 {
+    system::keyboard_delay_set(value)
+}
+
+#[no_mangle]
+pub extern "C" fn keyboard_speed_get() -> i32 {
+    system::keyboard_speed_get()
+}
+
+#[no_mangle]
+pub extern "C" fn keyboard_speed_set(value: i32) -> i32 {
+    system::keyboard_speed_set(value)
+}
+
+// ---- clipboard -------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn clipboard_sequence() -> u32 {
+    clipboard::sequence()
+}
+
+#[no_mangle]
+pub extern "C" fn clipboard_text() -> *mut c_char {
+    to_c(clipboard::read_text())
+}
+
+#[no_mangle]
+pub extern "C" fn clipboard_set(text: *const c_char) -> i32 {
+    let Some(text) = read(text) else {
+        return 0;
+    };
+    i32::from(clipboard::write_text(&text))
+}
+
+#[no_mangle]
+pub extern "C" fn clipboard_clear() -> i32 {
+    i32::from(clipboard::clear())
 }
 
 // ---- time zones -------------------------------------------------------------

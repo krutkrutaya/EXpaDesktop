@@ -81,4 +81,28 @@ class TaskBoard {
   void clear() {
     _items.clear();
   }
+
+  List<Object?> toJson() => [
+        for (final task in _items)
+          {'id': task.id, 'text': task.text, 'done': task.done},
+      ];
+
+  static TaskBoard fromJson(Object? json) {
+    final board = TaskBoard();
+    if (json is List) {
+      for (final raw in json) {
+        if (raw is! Map) continue;
+        final text = '${raw['text'] ?? ''}'.trim();
+        if (text.isEmpty) continue;
+        final task = TaskItem(
+          id: (raw['id'] as num?)?.toInt() ?? board._nextId,
+          text: text,
+          done: raw['done'] == true,
+        );
+        board._items.add(task);
+        if (task.id >= board._nextId) board._nextId = task.id + 1;
+      }
+    }
+    return board;
+  }
 }

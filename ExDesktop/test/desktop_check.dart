@@ -29,7 +29,7 @@ void runDesktopChecks() {
 
 void _catalog() {
   section('app catalog');
-  checkEquals('eleven built-in apps', ShellApp.values.length, 11);
+  checkEquals('sixteen built-in apps', ShellApp.values.length, 16);
   final ids = ShellApp.values.map((app) => app.id).toSet();
   checkEquals('ids are unique', ids.length, ShellApp.values.length);
   checkEquals('settings id', ShellApp.settings.id, 'settings');

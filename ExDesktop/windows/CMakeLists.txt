@@ -125,6 +125,16 @@ else()
   message(STATUS "sysctl.dll not found - native audio/Wi-Fi/display backend disabled")
 endif()
 
+# The updater is a standalone Rust binary: git fetch/checkout, flutter build,
+# relaunch. Installed next to the exe when built.
+set(UPDATER_EXE "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/updater/updater.exe")
+if(EXISTS "${UPDATER_EXE}")
+  install(FILES "${UPDATER_EXE}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+else()
+  message(STATUS "updater.exe not found - the Updater window shows checks only")
+endif()
+
 # The Rust music scanner is optional too: one native pass over the library
 # with cover extraction. Without it the Dart scanner is used.
 set(MUSIC_SCAN_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/music_scan/music_scan.dll")

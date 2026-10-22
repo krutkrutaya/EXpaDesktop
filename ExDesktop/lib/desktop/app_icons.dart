@@ -13,7 +13,12 @@ IconData iconForApp(ShellApp app) => switch (app) {
       ShellApp.tasks => Icons.checklist_outlined,
       ShellApp.browser => Icons.public_outlined,
       ShellApp.musics => Icons.music_note_outlined,
-      ShellApp.configs => Icons.spa_outlined,// the leaf tile requested next to Musics
+      ShellApp.configs => Icons.tune_rounded,
+      ShellApp.clipboard => Icons.content_paste_rounded,
+      ShellApp.notifications => Icons.notifications_none_rounded,
+      ShellApp.calendar => Icons.calendar_month_outlined,
+      ShellApp.emoji => Icons.emoji_emotions_outlined,
+      ShellApp.updates => Icons.system_update_alt_rounded,
       ShellApp.settings => Icons.settings_outlined,
       ShellApp.terminal => Icons.terminal_outlined,
     };
@@ -29,6 +34,11 @@ Color accentForApp(ShellApp app) => switch (app) {
       ShellApp.browser => const Color(0xFF9AB8FF),
       ShellApp.musics => const Color(0xFFFFA59A),
       ShellApp.configs => const Color(0xFF9AFFE0),
+      ShellApp.clipboard => const Color(0xFF9AD0FF),
+      ShellApp.notifications => const Color(0xFFFFD39A),
+      ShellApp.calendar => const Color(0xFFB49AFF),
+      ShellApp.emoji => const Color(0xFFFFE49A),
+      ShellApp.updates => const Color(0xFF9AFFD0),
       ShellApp.settings => const Color(0xFFD0D0D0),
       ShellApp.terminal => const Color(0xFF9AFFA5),
     };

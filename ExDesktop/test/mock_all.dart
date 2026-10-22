@@ -10,6 +10,8 @@
 
 import 'apps_check.dart' as apps;
 import 'desktop_check.dart' as desktop;
+import 'expa_check.dart' as expa;
+import 'exwm_check.dart' as exwm;
 import 'library_check.dart' as musiclib;
 import 'liquid_glass_mock_check.dart' as physics;
 import 'native_check.dart' as native;
@@ -20,6 +22,8 @@ import 'mock_harness.dart';
 
 Future<void> main() async {
   desktop.runDesktopChecks();
+  exwm.runExwmChecks();
+  expa.runExpaChecks();
   playback.runPlaybackChecks();
   await apps.runAppsChecks();
   await musiclib.runLibraryChecks();

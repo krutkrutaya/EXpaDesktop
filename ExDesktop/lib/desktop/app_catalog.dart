@@ -14,7 +14,12 @@ enum ShellApp {
   tasks('tasks', 'Tasks', 440, 540),
   browser('browser', 'Browser', 960, 640),
   musics('musics', 'Musics', 820, 540),
-  configs('configs', 'Configs', 560, 520),
+  configs('configs', 'Configs', 640, 560),
+  clipboard('clipboard', 'Clipboard', 560, 620),
+  notifications('notifications', 'Notifications', 560, 620),
+  calendar('calendar', 'Calendar', 480, 540),
+  emoji('emoji', 'Emoji', 500, 540),
+  updates('updates', 'Updater', 700, 640),
   settings('settings', 'Settings', 1000, 680),
   terminal('terminal', 'Terminal', 700, 440);
 

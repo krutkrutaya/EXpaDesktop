@@ -23,23 +23,38 @@ import 'apps/audio_pick.dart';
 import 'apps/music_library.dart';
 import 'apps/music_scanner.dart';
 import 'audio_sessions.dart';
+import 'apps/display_math.dart';
+import 'apps/files_model.dart';
 import 'command_router.dart';
 import 'desktop/app_catalog.dart';
 import 'desktop/app_icons.dart';
 import 'desktop/apps/browser_app.dart';
 import 'desktop/apps/calculator_app.dart';
+import 'desktop/apps/calendar_app.dart';
+import 'desktop/apps/clipboard_app.dart';
 import 'desktop/apps/configs_app.dart';
+import 'desktop/apps/emoji_app.dart';
 import 'desktop/apps/files_app.dart';
 import 'desktop/apps/musics_app.dart';
 import 'desktop/apps/notepad_app.dart';
+import 'desktop/apps/notifications_app.dart';
 import 'desktop/apps/paint_app.dart';
 import 'desktop/apps/settings_view.dart';
 import 'desktop/apps/snip_app.dart';
 import 'desktop/apps/tasks_app.dart';
 import 'desktop/apps/terminal_app.dart';
+import 'desktop/apps/updater_app.dart';
 import 'desktop/desktop_surface.dart';
 import 'desktop/shell_window.dart';
 import 'desktop/window_manager.dart' hide Rect4;
+import 'exwm/snap.dart';
+import 'exwm/wm_server.dart';
+import 'expa/de_config.dart';
+import 'expa/default_apps.dart';
+import 'expa/expa_theme.dart';
+import 'expa/notifications.dart';
+import 'expa/update_runner.dart';
+import 'expa/version.dart';
 import 'i18n.dart';
 import 'native/sysctl.dart';
 import 'id3_art.dart';
@@ -130,12 +145,38 @@ class _MyHomePageState extends State<MyHomePage>
     'assets/fons/fon8.jpg',
   ];
 
-  /// One window manager per in-app desktop, created on first use.
-  final Map<int, WindowManager> _managers = {};
+  /// EXWM owns the windows: one manager per in-app desktop.
+  late final WmServer _wm;
   Size _viewport = Size.zero;
 
   /// The whole shell, so the Snip app can photograph it.
   final GlobalKey _shellKey = GlobalKey();
+
+  /// EXPA's visual/behaviour configuration, persisted in prefs.cfg.
+  DeConfig _de = DeConfig.defaults;
+
+  /// In-shell notifications (the Notifications widget reads this).
+  final NotificationCenter _notifications = NotificationCenter();
+
+  /// The desktop's file associations (Files uses them on double-click).
+  late FileAssociations _associations = FileAssociations.standard;
+
+  /// A path the Files window should open (the drives pane).
+  final ValueNotifier<String?> _filesOpenPath = ValueNotifier<String?>(null);
+  final ValueNotifier<String?> _notepadOpenPath = ValueNotifier<String?>(null);
+  final ValueNotifier<String?> _browserOpenUrl = ValueNotifier<String?>(null);
+
+  /// The in-desktop lock screen.
+  bool _locked = false;
+  String _lockError = '';
+  final TextEditingController _lockController = TextEditingController();
+  final FocusNode _lockFocus = FocusNode();
+  Timer? _lockTimer;
+  DateTime _lastActivity = DateTime.now();
+
+  /// The latest toast; a short-lived copy of the newest notification.
+  ShellNotification? _toast;
+  Timer? _toastTimer;
 
   /// The player: audio, playlist, progress, and the artwork spin.
   late final PlayerController _player;
@@ -352,15 +393,16 @@ class _MyHomePageState extends State<MyHomePage>
   Timer? _warmthFx;
 
   /// The manager of the desktop that is on screen.
-  WindowManager get _windows => _managers.putIfAbsent(
-        _workspaces.active.id,
-        () => WindowManager(area: DesktopArea(_viewport.width, _viewport.height)),
-      );
+  WindowManager get _windows => _wm.activeManager;
 
   @override
   void initState() {
     super.initState();
     _workspaces = WorkspaceController(backgroundCount: _backgrounds.length);
+    _wm = WmServer(
+      workspaces: _workspaces,
+      area: DesktopArea(_viewport.width, _viewport.height),
+    )..addListener(_onWmChanged);
     _wifiNetworks = widget.wifiNetworks ?? const [];
     _player = PlayerController(engine: widget.audio, vsync: this);
     _player.setTracks(_seedTracks, const {});
@@ -381,6 +423,14 @@ class _MyHomePageState extends State<MyHomePage>
     _displayRes = ShellPrefs.get('display_res', 'auto');
     _displayOrient = ShellPrefs.get('display_orient', 'auto');
     _displayHz = ShellPrefs.get('display_hz', 'auto');
+    _de = DeConfig.fromMap(ShellPrefs.get);
+    _wm.configure(snapEnabled: _de.snapEnabled, snapGap: _de.snapGap);
+    _notifications.addListener(_onNotifications);
+    _associations = FileAssociations.fromRead(ShellPrefs.get);
+    _lockTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _checkAutoLock(),
+    );
     final savedItems = ShellPrefs.get('waybar_items');
     if (savedItems.isNotEmpty) {
       var items = _sanitizeWaybarItems(savedItems);
@@ -579,13 +629,6 @@ class _MyHomePageState extends State<MyHomePage>
     setState(() {});
   }
 
-  /// Opens a real Windows settings page (the updates pane's link).
-  static Future<void> _openWindowsUri(String uri) async {
-    try {
-      await Process.start('explorer.exe', [uri]);
-    } catch (_) {}
-  }
-
   /// One background read of the machine's Start-menu for the programs panel.
   Future<void> _scanWindowsApps() async {
     final apps = await WindowsApps.scan();
@@ -597,9 +640,7 @@ class _MyHomePageState extends State<MyHomePage>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _viewport = MediaQuery.of(context).size;
-    for (final manager in _managers.values) {
-      manager.retarget(DesktopArea(_viewport.width, _viewport.height));
-    }
+    _wm.retarget(DesktopArea(_viewport.width, _viewport.height));
 
     // Where each panel's glass is born from, and where it lands. The numbers
     // live in [ShellLayout] so the mock suite can check every one of them
@@ -698,6 +739,15 @@ class _MyHomePageState extends State<MyHomePage>
     _wifiMorph?.dispose();
     _launcherMorph?.dispose();
     _desktopsMorph?.dispose();
+    _wm.dispose();
+    _notifications.removeListener(_onNotifications);
+    _filesOpenPath.dispose();
+    _notepadOpenPath.dispose();
+    _browserOpenUrl.dispose();
+    _lockTimer?.cancel();
+    _toastTimer?.cancel();
+    _lockController.dispose();
+    _lockFocus.dispose();
     _appsMorph?.dispose();
     _appsSearch.dispose();
     _appsFocus.dispose();
@@ -913,7 +963,7 @@ class _MyHomePageState extends State<MyHomePage>
           .lookup<NativeFunction<SetBrightnessBoostNative>>(
               'set_brightness_boost')
           .asFunction();
-      final current = _getBrightness!();
+      final current = normalizeBrightness(_getBrightness!()) ?? _brightness;
       if (mounted) {
         setState(() => _brightness = current);
       } else {
@@ -1209,6 +1259,11 @@ class _MyHomePageState extends State<MyHomePage>
         setState(() => _wifiBusy = false);
       }
       if (ok) unawaited(_wifiScan());
+      _notify(
+        ok ? 'Wi-Fi connected' : 'Wi-Fi connection failed',
+        net.ssid,
+        category: 'network',
+      );
       return ok;
     } catch (_) {
       if (mounted) setState(() => _wifiBusy = false);
@@ -1225,6 +1280,7 @@ class _MyHomePageState extends State<MyHomePage>
       await WifiControl.disconnect();
     } catch (_) {}
     if (mounted) setState(() => _wifiBusy = false);
+    _notify('Wi-Fi disconnected', net.ssid, category: 'network');
     unawaited(_wifiScan());
   }
 
@@ -1353,7 +1409,8 @@ class _MyHomePageState extends State<MyHomePage>
     final musics = _windows.forApp(ShellApp.musics.id);
     if (musics != null) _windows.focus(musics.id);
     setState(() {});
-    _showMusicNotice('Added: ${keyed.title}');
+    _showMusicNotice('Added: ');
+    _notify('Track added', keyed.title, category: 'music');
   }
 
   void _showMusicNotice(String text) {
@@ -1369,9 +1426,13 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.calculator:
         return const CalculatorApp();
       case ShellApp.notepad:
-        return const NotepadApp();
+        return NotepadApp(openPath: _notepadOpenPath);
       case ShellApp.files:
-        return FilesApp(audioPick: _pickRequest);
+        return FilesApp(
+          audioPick: _pickRequest,
+          openPath: _filesOpenPath,
+          onOpenDefault: _openDefaultApp,
+        );
       case ShellApp.paint:
         return const PaintApp();
       case ShellApp.snip:
@@ -1379,7 +1440,7 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.tasks:
         return const TasksApp();
       case ShellApp.browser:
-        return const BrowserApp();
+        return BrowserApp(openUrl: _browserOpenUrl);
       case ShellApp.musics:
         return MusicsApp(
           player: _player,
@@ -1423,15 +1484,121 @@ class _MyHomePageState extends State<MyHomePage>
           onDisplayOrient: _setDisplayOrient,
           onDisplayHz: _setDisplayHz,
           // Updates: real links are handled by the shell.
-          onOpenUpdates: _openWindowsUri,
+          onOpenUpdater: () => _openApp(ShellApp.updates),
+          config: _de,
+          onConfig: _setDeConfig,
+          associations: _associations,
+          onAssociations: _setAssociations,
+          notifications: _notifications,
+          onLock: _lockNow,
+          onOpenPath: _openFilesAt,
         );
       case ShellApp.configs:
-        // The configs app is an empty shelf for now; its former switches
-        // (language, slideshow) moved into the Settings window.
-        return const ConfigsApp();
+        return ConfigsApp(
+          config: _de,
+          onConfig: _setDeConfig,
+          waybarItems: ShellLayout.waybarRightItems,
+          onWaybarItems: _setWaybarItems,
+          windows: _windows.windows,
+          activeId: _windows.activeId,
+          onFocusWindow: (window) {
+            _windows.focus(window.id);
+            setState(() {});
+          },
+          onCloseWindow: (window) {
+            _windows.close(window.id);
+            setState(() {});
+          },
+          version: appVersion,
+          prefsPath: ShellPrefs.path,
+          repoPath: UpdateRunner.findRepo(),
+        );
       case ShellApp.terminal:
         return const TerminalApp();
+      case ShellApp.clipboard:
+        return const ClipboardApp();
+      case ShellApp.notifications:
+        return NotificationsApp(center: _notifications);
+      case ShellApp.calendar:
+        return const CalendarApp();
+      case ShellApp.emoji:
+        return const EmojiApp();
+      case ShellApp.updates:
+        return UpdaterApp(
+          current: appVersion,
+          onUpdate: _startUpdate,
+        );
     }
+  }
+
+  void _setAssociations(FileAssociations next) {
+    setState(() => _associations = next);
+    final map = next.toMap();
+    for (final entry in map.entries) {
+      ShellPrefs.set(entry.key, entry.value);
+    }
+  }
+
+  void _openNotepadAt(String path) {
+    _notepadOpenPath.value = path;
+    _openApp(ShellApp.notepad);
+  }
+
+  bool _openDefaultApp(FileEntry entry) {
+    final app = _associations.appFor(entry.path);
+    switch (app) {
+      case 'notepad':
+        _openNotepadAt(entry.path);
+        return true;
+      case 'musics':
+        _openApp(ShellApp.musics);
+        return true;
+      case 'browser':
+        _browserOpenUrl.value = Uri.file(entry.path).toString();
+        _openApp(ShellApp.browser);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _openFilesAt(String path) {
+    _filesOpenPath.value = path;
+    _openApp(ShellApp.files);
+  }
+
+  void _lockNow() {
+    setState(() {
+      _locked = true;
+      _lockError = '';
+      _lockController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _lockFocus.requestFocus());
+  }
+
+  void _checkAutoLock() {
+    if (!mounted || _locked || _de.autoLockMinutes <= 0) return;
+    final idle = DateTime.now().difference(_lastActivity).inMinutes;
+    if (idle >= _de.autoLockMinutes) _lockNow();
+  }
+
+  void _unlock() {
+    final pin = _de.lockPin;
+    if (pin.isNotEmpty && _lockController.text != pin) {
+      setState(() => _lockError = Loc.t('Wrong PIN', 'Неверный PIN'));
+      return;
+    }
+    setState(() {
+      _locked = false;
+      _lockError = '';
+      _lockController.clear();
+      _lastActivity = DateTime.now();
+    });
+  }
+
+  void _openWidget(String key) {
+    final app = ShellApp.byId(key);
+    if (app != null) _openApp(app);
   }
 
   void _setWallpaper(int index) {
@@ -1460,15 +1627,65 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   void _closeWorkspace() {
-    final id = _workspaces.active.id;
-    setState(() {
-      final closed = _workspaces.closeActive();
-      if (closed) _managers.remove(id);
-    });
+    setState(_workspaces.closeActive);
   }
 
   void _selectWorkspace(int index) {
     setState(() => _workspaces.select(index));
+  }
+
+  void _onWmChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onNotifications() {
+    if (mounted) setState(() {});
+  }
+
+  /// Posts a desktop notification when the user has them enabled.
+  void _notify(String title, String body, {String category = 'system'}) {
+    if (!_de.notificationsEnabled) return;
+    final item =
+        _notifications.post(title, body, category: category);
+    setState(() => _toast = item);
+    _toastTimer?.cancel();
+    _toastTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _toast?.id == item.id) {
+        setState(() => _toast = null);
+      }
+    });
+  }
+
+  /// The Updater window's action: start the Rust helper, then close this
+  /// process so the build can replace the exe. The helper relaunches it.
+  Future<String?> _startUpdate(String mode, String target, String repo) async {
+    final ok = await UpdateRunner.start(
+      repo: repo,
+      mode: mode,
+      target: target,
+      pid: pid,
+    );
+    if (!ok) {
+      return Loc.t(
+        'updater.exe was not found next to the app.',
+        'updater.exe не найден рядом с приложением.',
+      );
+    }
+    Future<void>.delayed(const Duration(milliseconds: 500), () => exit(0));
+    return null;
+  }
+
+  /// Saves every desktop-environment knob and applies the behaviour ones to
+  /// EXWM immediately. Called by Settings and the Configs app.
+  void _setDeConfig(DeConfig next) {
+    setState(() {
+      _de = next;
+    });
+    final map = next.toMap();
+    for (final entry in map.entries) {
+      ShellPrefs.set(entry.key, entry.value);
+    }
+    _wm.configure(snapEnabled: next.snapEnabled, snapGap: next.snapGap);
   }
 
   void _nextWorkspace() {
@@ -1520,9 +1737,54 @@ class _MyHomePageState extends State<MyHomePage>
         ): _toggleCommandBar,
         const SingleActivator(LogicalKeyboardKey.tab, control: true):
             _cycleWindows,
+        const SingleActivator(
+          LogicalKeyboardKey.arrowLeft,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.leftHalf),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowRight,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.rightHalf),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowUp,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.maximize),
+        const SingleActivator(
+          LogicalKeyboardKey.arrowDown,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.bottomHalf),
+        const SingleActivator(
+          LogicalKeyboardKey.digit1,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.topLeft),
+        const SingleActivator(
+          LogicalKeyboardKey.digit2,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.topRight),
+        const SingleActivator(
+          LogicalKeyboardKey.digit3,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.bottomLeft),
+        const SingleActivator(
+          LogicalKeyboardKey.digit4,
+          control: true,
+          alt: true,
+        ): () => _snapActive(SnapZone.bottomRight),
         if (_commandBarOpen)
           const SingleActivator(LogicalKeyboardKey.escape): _toggleCommandBar,
       };
+
+  void _snapActive(SnapZone zone) {
+    _wm.snapActive(zone);
+    setState(() {});
+  }
 
   void _cycleWindows() {
     if (_windows.cycleFocus() == null) return;
@@ -1792,6 +2054,14 @@ class _MyHomePageState extends State<MyHomePage>
                 ),
               ),
             ),
+            if (_de.wallpaperDim > 0)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: _de.wallpaperDim),
+                  ),
+                ),
+              ),
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -1817,7 +2087,10 @@ class _MyHomePageState extends State<MyHomePage>
             Positioned(
               top: 20.0,
               left: 30.0,
-              child: _Clock(deltaMinutes: _tzAuto ? 0 : _tzDeltaMin),
+              child: _Clock(
+                deltaMinutes: _tzAuto ? 0 : _tzDeltaMin,
+                showSeconds: _de.clockSeconds,
+              ),
             ),
             // The windows: above the wallpaper, below the waybar and panels.
             Positioned.fill(
@@ -1874,6 +2147,8 @@ class _MyHomePageState extends State<MyHomePage>
                   onBluetooth: () => _openSettingsAt('bluetooth'),
                   onVolume: _toggleVolume,
                   rightItems: ShellLayout.waybarRightItems,
+                  onWidget: _openWidget,
+                  notificationsUnread: _notifications.unread,
                 ),
               ),
             ),
@@ -2678,14 +2953,53 @@ class _MyHomePageState extends State<MyHomePage>
                 ),
               ),
             ),
+            if (_toast != null)
+              Positioned(
+                top: 72,
+                right: 92,
+                child: _ToastCard(
+                  key: const ValueKey('shell-toast'),
+                  notification: _toast!,
+                  onTap: () {
+                    setState(() => _toast = null);
+                    _openApp(ShellApp.notifications);
+                  },
+                ),
+              ),
+            if (_locked)
+              Positioned.fill(
+                child: _LockOverlay(
+                  key: const ValueKey('lock-screen'),
+                  controller: _lockController,
+                  focus: _lockFocus,
+                  error: _lockError,
+                  pinRequired: _de.lockPin.isNotEmpty,
+                  onUnlock: _unlock,
+                ),
+              ),
           ],
         ),
       ),
     );
 
+    final themed = ExpaTheme(
+      config: _de,
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(_de.fontScale),
+        ),
+        child: shell,
+      ),
+    );
     return CallbackShortcuts(
       bindings: _shortcutBindings,
-      child: Focus(autofocus: true, child: shell),
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _lastActivity = DateTime.now(),
+        onPointerHover: (_) => _lastActivity = DateTime.now(),
+        onPointerSignal: (_) => _lastActivity = DateTime.now(),
+        child: Focus(autofocus: true, child: themed),
+      ),
     );
   }
 
@@ -2749,14 +3063,204 @@ class _MyHomePageState extends State<MyHomePage>
 
 // === part 4 ===
 
+/// A short-lived notification card in the top-right corner. Tapping it opens
+/// the Notifications window; it fades in and is replaced by the next toast.
+class _ToastCard extends StatelessWidget {
+  final ShellNotification notification;
+  final VoidCallback onTap;
+
+  const _ToastCard({
+    super.key,
+    required this.notification,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, child) => Opacity(
+        opacity: t,
+        child:
+            Transform.translate(offset: Offset(24 * (1 - t), 0), child: child),
+      ),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 300,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xF014171C),
+            borderRadius: BorderRadius.circular(14),
+            border:
+                Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 22,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                switch (notification.category) {
+                  'music' => Icons.music_note_rounded,
+                  'network' => Icons.wifi_rounded,
+                  'updates' => Icons.system_update_rounded,
+                  _ => Icons.notifications_none_rounded,
+                },
+                size: 17,
+                color: Colors.white70,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      notification.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      notification.body,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.chevron_right_rounded,
+                  size: 15, color: Colors.white24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The in-desktop lock screen. It covers the shell and keeps the desktop
+/// processes alive behind it; the PIN is the one from Settings → Lock screen.
+class _LockOverlay extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focus;
+  final String error;
+  final bool pinRequired;
+  final VoidCallback onUnlock;
+
+  const _LockOverlay({
+    super.key,
+    required this.controller,
+    required this.focus,
+    required this.error,
+    required this.pinRequired,
+    required this.onUnlock,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xEE08090B), Color(0xEE11151C)],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_rounded,
+                size: 42, color: Colors.white.withValues(alpha: 0.7)),
+            const SizedBox(height: 14),
+            const Text(
+              'EXpaDesktop',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Caption(Loc.t('Locked', 'Заблокировано')),
+            const SizedBox(height: 18),
+            if (pinRequired)
+              SizedBox(
+                width: 220,
+                child: TextField(
+                  key: const ValueKey('lock-pin'),
+                  controller: controller,
+                  focusNode: focus,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  onSubmitted: (_) => onUnlock(),
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 16, letterSpacing: 5),
+                  decoration: InputDecoration(
+                    hintText: 'PIN',
+                    hintStyle: const TextStyle(
+                        color: Colors.white24, letterSpacing: 2),
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+            if (pinRequired) const SizedBox(height: 12),
+            PillButton(
+              key: const ValueKey('lock-unlock'),
+              label: Loc.t('Unlock', 'Разблокировать'),
+              icon: Icons.lock_open_rounded,
+              onTap: onUnlock,
+            ),
+            if (error.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(error,
+                  style: const TextStyle(
+                      color: Color(0xFFFF8A8A), fontSize: 11.5)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// The giant clock. It owns its one-second timer, so the shell does not
 /// rebuild the whole desktop (and every open window) every second.
 class _Clock extends StatefulWidget {
-  const _Clock({this.deltaMinutes = 0});
+  const _Clock({this.deltaMinutes = 0, this.showSeconds = false});
 
   /// The chosen zone's offset minus this machine's offset. The clock ticks in
   /// UTC and re-localizes through it, so DST is handled by the zone table.
   final int deltaMinutes;
+
+  /// EXPA customization: show hh:mm:ss instead of hh:mm.
+  final bool showSeconds;
 
   @override
   State<_Clock> createState() => _ClockState();
@@ -2769,9 +3273,9 @@ class _ClockState extends State<_Clock> {
   @override
   void initState() {
     super.initState();
-    _time = _format(_now());
+    _time = _format(_now(), seconds: widget.showSeconds);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final next = _format(_now());
+      final next = _format(_now(), seconds: widget.showSeconds);
       if (mounted && next != _time) setState(() => _time = next);
     });
   }
@@ -2783,13 +3287,14 @@ class _ClockState extends State<_Clock> {
   void didUpdateWidget(covariant _Clock oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.deltaMinutes == widget.deltaMinutes) return;
-    final next = _format(_now());
+    final next = _format(_now(), seconds: widget.showSeconds);
     if (next != _time) setState(() => _time = next);
   }
 
-  static String _format(DateTime now) =>
+  static String _format(DateTime now, {bool seconds = false}) =>
       '${now.hour.toString().padLeft(2, '0')}:'
-      '${now.minute.toString().padLeft(2, '0')}';
+      '${now.minute.toString().padLeft(2, '0')}'
+      '${seconds ? ':${now.second.toString().padLeft(2, '0')}' : ''}';
 
   @override
   void dispose() {
@@ -2831,6 +3336,8 @@ class _Waybar extends StatelessWidget {
   final bool wifiOn;
   final bool bluetoothOn;
   final bool muted;
+  final void Function(String key) onWidget;
+  final int notificationsUnread;
 
   const _Waybar({
     super.key,
@@ -2845,6 +3352,8 @@ class _Waybar extends StatelessWidget {
     required this.wifiOn,
     required this.bluetoothOn,
     required this.muted,
+    required this.onWidget,
+    this.notificationsUnread = 0,
   });
 
   @override
@@ -2956,13 +3465,13 @@ class _Waybar extends StatelessWidget {
           onTap: onWifi,
         );
       default:
-        // The vibe-bar placeholders (buffer, emoji, updates, calendar,
-        // notifications): visible and labelled, but their flyouts come later.
+        // User-added waybar panels open their in-shell app.
         return _WaybarButton(
           key: ValueKey('topbar-$key'),
           icon: _waybarItemIcon(key, muted),
           tooltip: _waybarItemLabel(key),
-          onTap: () {},
+          badge: key == 'notifications' ? notificationsUnread : 0,
+          onTap: () => onWidget(key),
         );
     }
   }
@@ -2997,6 +3506,7 @@ class _WaybarButton extends StatefulWidget {
   final String tooltip;
   final VoidCallback onTap;
   final bool active;
+  final int badge;
 
   const _WaybarButton({
     super.key,
@@ -3004,6 +3514,7 @@ class _WaybarButton extends StatefulWidget {
     required this.tooltip,
     required this.onTap,
     this.active = true,
+    this.badge = 0,
   });
 
   @override
@@ -3034,10 +3545,38 @@ class _WaybarButtonState extends State<_WaybarButton> {
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(10.0),
             ),
-            child: Icon(
-              widget.icon,
-              color: widget.active ? Colors.white : Colors.white38,
-              size: 20,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  widget.icon,
+                  color: widget.active ? Colors.white : Colors.white38,
+                  size: 20,
+                ),
+                if (widget.badge > 0)
+                  Positioned(
+                    right: 5,
+                    top: 6,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 13),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 3, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF8AB4F8),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        widget.badge > 9 ? '9+' : '${widget.badge}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -3647,7 +4186,11 @@ class _PanelIconState extends State<PanelIcon> {
                       ? Colors.white.withValues(alpha: 0.5)
                       : Colors.transparent,
             ),
-            child: Icon(widget.icon, color: Colors.white, size: 26),
+            child: Icon(
+              widget.icon,
+              color: Colors.white,
+              size: 26 * ExpaTheme.configOf(context).dockIconScale,
+            ),
           ),
         ),
       ),

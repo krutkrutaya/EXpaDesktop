@@ -21,6 +21,9 @@ class ShellPrefs {
   /// Overridable for tests that do not want to touch the real machine.
   static String? _directory;
 
+  /// The effective prefs file path (the Configs app shows it).
+  static String get path => _path;
+
   static String get _path {
     final dir =
         _directory ?? Platform.environment['APPDATA'] ?? Directory.systemTemp.path;

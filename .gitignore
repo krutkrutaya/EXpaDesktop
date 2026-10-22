@@ -34,5 +34,9 @@ ExDesktop/lib/rust/music_scan/*.dll
 ExDesktop/lib/rust/music_scan/target/
 ExDesktop/lib/rust/sysctl/*.dll
 ExDesktop/lib/rust/sysctl/target/
+ExDesktop/lib/rust/updater/*.exe
+ExDesktop/lib/rust/updater/target/
+ExDesktop/.expa_update.log
+.expa_update.log
 ExDesktop/lib/rust/target/
 docs/screenshot.png

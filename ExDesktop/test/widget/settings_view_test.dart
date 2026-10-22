@@ -7,6 +7,11 @@
 // test touches the machine's radios or mutes the speakers of whoever runs it.
 
 import 'package:exp_desktop/audio_sessions.dart';
+import 'package:exp_desktop/expa/de_config.dart';
+import 'package:exp_desktop/expa/default_apps.dart';
+import 'package:exp_desktop/expa/drives.dart';
+import 'package:exp_desktop/expa/input_settings.dart';
+import 'package:exp_desktop/expa/notifications.dart';
 import 'package:exp_desktop/desktop/apps/settings_view.dart';
 import 'package:exp_desktop/native/sysctl.dart';
 import 'package:exp_desktop/radio_control.dart';
@@ -152,12 +157,57 @@ void main() {
     );
   });
 
-  testWidgets('a Windows-owned row offers its real Settings page',
-      (tester) async {
-    await _open(tester, section: 'defaultapps');
+  testWidgets('Default apps edits the desktop association table', (tester) async {
+    FileAssociations? saved;
+    await _open(
+      tester,
+      section: 'defaultapps',
+      onAssociations: (value) => saved = value,
+    );
 
-    expect(find.byKey(const ValueKey('settings-open-windows')), findsOneWidget);
-    expect(find.textContaining('lives in Windows Settings'), findsOneWidget);
+    expect(find.text('.txt'), findsOneWidget);
+    expect(find.text('notepad'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('settings-assoc-app-txt')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('paint').last);
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(saved!.byExtension['txt'], 'paint');
+  });
+
+  testWidgets('the pointer pane reports the speed and writes the swap',
+      (tester) async {
+    final source = _FakeInput(mouseSpeed: 7);
+    await _open(tester, section: 'pointer', inputSource: source);
+
+    expect(find.text('7'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('settings-mouse-swap')));
+    await _settle(tester);
+
+    expect(source.swapped, isTrue);
+  });
+
+  testWidgets('the lock pane saves a PIN and locks the desktop', (tester) async {
+    DeConfig? saved;
+    var locked = false;
+    await _open(
+      tester,
+      section: 'lock',
+      onConfig: (value) => saved = value,
+      onLock: () => locked = true,
+    );
+
+    await tester.enterText(
+        find.byKey(const ValueKey('settings-lock-pin')), '12ab34');
+    await tester.tap(find.byKey(const ValueKey('settings-lock-save-pin')));
+    await _settle(tester);
+    expect(saved?.lockPin, '1234');
+
+    await tester.tap(find.byKey(const ValueKey('settings-lock-now')));
+    await _settle(tester);
+    expect(locked, isTrue);
   });
 
   testWidgets('nothing selected shows the hint', (tester) async {
@@ -383,25 +433,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('updates are at the bottom and open the right pages',
-      (tester) async {
-    final opened = <String>[];
+  testWidgets('the updates pane opens the in-shell Updater', (tester) async {
+    var opened = false;
     await _open(
       tester,
       section: 'updates',
-      onOpenUpdates: (uri) async => opened.add(uri),
+      onOpenUpdater: () => opened = true,
     );
 
     expect(find.byKey(const ValueKey('updates-expa')), findsOneWidget);
-    expect(find.byKey(const ValueKey('updates-windows')), findsOneWidget);
+    expect(find.byKey(const ValueKey('updates-windows')), findsNothing);
 
-    await tester.tap(find.text('Check'));
+    await tester.tap(find.text('Open Updater'));
     await tester.pump();
-    expect(opened.single, contains('github.com/krutkrutaya/EXpaDesktop'));
-
-    await tester.tap(find.text('Open'));
-    await tester.pump();
-    expect(opened.last, 'ms-settings:windowsupdate');
+    expect(opened, isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -444,10 +489,19 @@ Widget _settings({
   ValueChanged<String>? onDisplayRes,
   ValueChanged<String>? onDisplayOrient,
   ValueChanged<String>? onDisplayHz,
-  Future<void> Function(String)? onOpenUpdates,
+  VoidCallback? onOpenUpdater,
   DisplayState? displayState,
   List<TimezoneRow>? timezones,
   List<AudioAppSession>? audioSessions,
+  DeConfig config = DeConfig.defaults,
+  ValueChanged<DeConfig>? onConfig,
+  FileAssociations associations = FileAssociations.standard,
+  ValueChanged<FileAssociations>? onAssociations,
+  NotificationCenter? notifications,
+  VoidCallback? onLock,
+  ValueChanged<String>? onOpenPath,
+  InputSource? inputSource,
+  List<DriveEntry>? drives,
 }) {
   final nav = navigator ?? SettingsNavigator();
   if (navigator == null) nav.show(section);
@@ -475,10 +529,19 @@ Widget _settings({
     onDisplayRes: onDisplayRes,
     onDisplayOrient: onDisplayOrient,
     onDisplayHz: onDisplayHz,
-    onOpenUpdates: onOpenUpdates,
+    onOpenUpdater: onOpenUpdater,
     displayState: displayState,
     timezones: timezones,
     audioSessions: audioSessions,
+    config: config,
+    onConfig: onConfig,
+    associations: associations,
+    onAssociations: onAssociations,
+    notifications: notifications,
+    onLock: onLock,
+    onOpenPath: onOpenPath,
+    inputSource: inputSource,
+    drives: drives,
   );
 }
 
@@ -520,10 +583,19 @@ Future<void> _open(
   ValueChanged<String>? onDisplayRes,
   ValueChanged<String>? onDisplayOrient,
   ValueChanged<String>? onDisplayHz,
-  Future<void> Function(String)? onOpenUpdates,
+  VoidCallback? onOpenUpdater,
   DisplayState? displayState,
   List<TimezoneRow>? timezones,
   List<AudioAppSession>? audioSessions,
+  DeConfig config = DeConfig.defaults,
+  ValueChanged<DeConfig>? onConfig,
+  FileAssociations associations = FileAssociations.standard,
+  ValueChanged<FileAssociations>? onAssociations,
+  NotificationCenter? notifications,
+  VoidCallback? onLock,
+  ValueChanged<String>? onOpenPath,
+  InputSource? inputSource,
+  List<DriveEntry>? drives,
   Size hostSize = const Size(960, 640),
 }) async {
   tester.view.physicalSize = const Size(1280, 800);
@@ -556,10 +628,19 @@ Future<void> _open(
       onDisplayRes: onDisplayRes,
       onDisplayOrient: onDisplayOrient,
       onDisplayHz: onDisplayHz,
-      onOpenUpdates: onOpenUpdates,
+      onOpenUpdater: onOpenUpdater,
       displayState: displayState,
       timezones: timezones,
       audioSessions: audioSessions,
+      config: config,
+      onConfig: onConfig,
+      associations: associations,
+      onAssociations: onAssociations,
+      notifications: notifications,
+      onLock: onLock,
+      onOpenPath: onOpenPath,
+      inputSource: inputSource,
+      drives: drives,
     ),
     hostSize,
   ));
@@ -638,4 +719,34 @@ class _FakeRadio implements RadioSource {
     states[kind] = next;
     return RadioActionResult(ok: true, status: next, message: 'ok');
   }
+}
+class _FakeInput implements InputSource {
+  _FakeInput({this.mouseSpeed = 10});
+
+  @override
+  int? mouseSpeed;
+  @override
+  bool? mouseSwap = false;
+  @override
+  int? wheelLines = 3;
+  @override
+  int? keyDelay = 1;
+  @override
+  int? keySpeed = 31;
+
+  bool swapped = false;
+
+  @override
+  void setMouseSpeed(int value) => mouseSpeed = value;
+  @override
+  void setMouseSwap(bool value) {
+    mouseSwap = value;
+    swapped = true;
+  }
+  @override
+  void setWheelLines(int value) => wheelLines = value;
+  @override
+  void setKeyDelay(int value) => keyDelay = value;
+  @override
+  void setKeySpeed(int value) => keySpeed = value;
 }

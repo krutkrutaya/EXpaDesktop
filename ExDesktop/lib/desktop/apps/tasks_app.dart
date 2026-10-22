@@ -3,17 +3,22 @@
 import 'package:flutter/material.dart';
 
 import '../../apps/task_board.dart';
+import '../../apps/task_store.dart';
 import '../../ui/glass.dart';
 
 class TasksApp extends StatefulWidget {
-  const TasksApp({super.key});
+  /// Injectable for the tests; the default is %APPDATA%\EXpaDesktop\tasks.json.
+  final TaskStore? store;
+
+  const TasksApp({super.key, this.store});
 
   @override
   State<TasksApp> createState() => _TasksAppState();
 }
 
 class _TasksAppState extends State<TasksApp> {
-  final TaskBoard _board = TaskBoard();
+  late final TaskStore _store = widget.store ?? TaskStore();
+  late final TaskBoard _board = _store.load();
   final TextEditingController _input = TextEditingController();
   final FocusNode _focus = FocusNode(debugLabel: 'tasks');
 
@@ -25,6 +30,7 @@ class _TasksAppState extends State<TasksApp> {
 
   @override
   void dispose() {
+    _store.save(_board);
     _input.dispose();
     _focus.dispose();
     super.dispose();
@@ -35,6 +41,7 @@ class _TasksAppState extends State<TasksApp> {
     if (task == null) return;
     _input.clear();
     setState(() {});
+    _store.save(_board);
     _focus.requestFocus();
   }
 
@@ -94,10 +101,12 @@ class _TasksAppState extends State<TasksApp> {
                         task: task,
                         onToggle: () {
                           _board.toggle(task.id);
+                          _store.save(_board);
                           setState(() {});
                         },
                         onRemove: () {
                           _board.remove(task.id);
+                          _store.save(_board);
                           setState(() {});
                         },
                       );
@@ -116,6 +125,7 @@ class _TasksAppState extends State<TasksApp> {
                   icon: Icons.cleaning_services_outlined,
                   onTap: () {
                     _board.clearDone();
+                    _store.save(_board);
                     setState(() {});
                   },
                 ),

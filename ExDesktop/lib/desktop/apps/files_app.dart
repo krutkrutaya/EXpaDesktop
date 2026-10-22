@@ -22,7 +22,21 @@ class FilesApp extends StatefulWidget {
   /// banner and a Use button on audio rows.
   final ValueListenable<AudioPickRequest?>? audioPick;
 
-  const FilesApp({super.key, this.startPath, this.lister, this.audioPick});
+  /// A path the shell wants this window to open (Settings → Drives).
+  final ValueNotifier<String?>? openPath;
+
+  /// Lets the shell route a double-click through the desktop's file
+  /// associations. Returning true means the file was handed to another app.
+  final bool Function(FileEntry entry)? onOpenDefault;
+
+  const FilesApp({
+    super.key,
+    this.startPath,
+    this.lister,
+    this.audioPick,
+    this.openPath,
+    this.onOpenDefault,
+  });
 
   @override
   State<FilesApp> createState() => _FilesAppState();
@@ -46,24 +60,47 @@ class _FilesAppState extends State<FilesApp> {
     _model = FilesModel(lister: widget.lister ?? _listDisk, start: start);
     unawaited(_model.open(start).then((_) => _refresh()));
     widget.audioPick?.addListener(_onPickChanged);
+    widget.openPath?.addListener(_onOpenPathChanged);
+    _consumeOpenPath();
   }
 
   @override
   void didUpdateWidget(covariant FilesApp oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.audioPick == widget.audioPick) return;
-    oldWidget.audioPick?.removeListener(_onPickChanged);
-    widget.audioPick?.addListener(_onPickChanged);
+    if (oldWidget.audioPick != widget.audioPick) {
+      oldWidget.audioPick?.removeListener(_onPickChanged);
+      widget.audioPick?.addListener(_onPickChanged);
+    }
+    if (oldWidget.openPath != widget.openPath) {
+      oldWidget.openPath?.removeListener(_onOpenPathChanged);
+      widget.openPath?.addListener(_onOpenPathChanged);
+      _consumeOpenPath();
+    }
   }
 
   @override
   void dispose() {
     widget.audioPick?.removeListener(_onPickChanged);
+    widget.openPath?.removeListener(_onOpenPathChanged);
     super.dispose();
   }
 
   void _onPickChanged() {
     if (mounted) setState(() {});
+  }
+
+  void _onOpenPathChanged() {
+    if (mounted) _consumeOpenPath();
+  }
+
+  void _consumeOpenPath() {
+    final path = widget.openPath?.value;
+    if (path == null || path.isEmpty) return;
+    _selected = null;
+    _previewText = null;
+    unawaited(_model.open(path).then((_) => _refresh()));
+    // Consume it so the same path can be requested again later.
+    widget.openPath?.value = null;
   }
 
   AudioPickRequest? get _pickRequest => widget.audioPick?.value;
@@ -152,6 +189,7 @@ class _FilesAppState extends State<FilesApp> {
       _pick(entry);
       return;
     }
+    if (widget.onOpenDefault?.call(entry) == true) return;
     await _select(entry);
   }
 

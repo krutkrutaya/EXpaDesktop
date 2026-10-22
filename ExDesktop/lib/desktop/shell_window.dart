@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'app_catalog.dart';
 import 'app_icons.dart';
 import 'window_manager.dart';
+import '../expa/expa_theme.dart';
 
 /// What the exit animation should do when it lands.
 enum _ExitAction { none, close, minimize }
@@ -165,6 +166,29 @@ class _ShellWindowState extends State<ShellWindow>
     // Leave the registry so a stale handle never points at a dead state.
     if (_states[widget.window.id] == this) _states.remove(widget.window.id);
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final config = ExpaTheme.configOf(context);
+    final speed = config.animationsEnabled ? config.animationSpeed : 0.0;
+    if (speed <= 0) {
+      _entrance.duration = const Duration(milliseconds: 1);
+      _restore.duration = const Duration(milliseconds: 1);
+      _exit.duration = const Duration(milliseconds: 1);
+      _genie.duration = const Duration(milliseconds: 1);
+      _rectMove.duration = const Duration(milliseconds: 1);
+      _entrance.value = 1;
+      _restore.value = 1;
+      return;
+    }
+    int scaled(int ms) => (ms / speed).round().clamp(40, 900);
+    _entrance.duration = Duration(milliseconds: scaled(260));
+    _restore.duration = Duration(milliseconds: scaled(360));
+    _exit.duration = Duration(milliseconds: scaled(320));
+    _genie.duration = Duration(milliseconds: scaled(360));
+    _rectMove.duration = Duration(milliseconds: scaled(230));
   }
 
   /// Maximize or restore with a short glide. Called from the title bar (both
@@ -341,7 +365,9 @@ class _ShellWindowState extends State<ShellWindow>
 
   Widget _chrome(BuildContext context) {
     final window = widget.window;
-    final radius = window.maximized ? 10.0 : 16.0;
+    final config = ExpaTheme.configOf(context);
+    final accent = Color(config.accent);
+    final radius = window.maximized ? 10.0 : config.windowRadius;
     // The window no longer carries a flat dark fill: the wallpaper shows
     // through a deep gaussian blur. Settings keeps the deepest blur.
     final blur = window.app == ShellApp.settings ? 50.0 : 30.0;
@@ -368,7 +394,9 @@ class _ShellWindowState extends State<ShellWindow>
             foregroundDecoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius),
               border: Border.all(
-                color: Colors.white.withValues(alpha: widget.active ? 0.26 : 0.10),
+                color: widget.active
+                    ? accent.withValues(alpha: 0.55)
+                    : Colors.white.withValues(alpha: 0.10),
               ),
             ),
             child: Column(

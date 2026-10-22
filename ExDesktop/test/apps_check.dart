@@ -12,6 +12,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:exp_desktop/apps/display_math.dart';
+import 'package:exp_desktop/apps/task_store.dart';
+
 import 'package:exp_desktop/apps/browser_model.dart';
 import 'package:exp_desktop/apps/calculator_engine.dart';
 import 'package:exp_desktop/apps/files_model.dart';
@@ -29,6 +32,7 @@ Future<void> runAppsChecks() async {
   _paint();
   await _terminal();
   _browser();
+  _display();
 }
 
 void _calculator() {
@@ -188,6 +192,23 @@ void _tasks() {
   checkEquals('clearDone removes the finished', board.clearDone(), 2);
   checkEquals('one task left', board.count, 1);
   check('removing an unknown id is harmless', !board.remove(999));
+  final restored = TaskBoard.fromJson(board.toJson());
+  checkEquals('the JSON round-trip keeps the count', restored.count, board.count);
+  checkEquals('the round-trip keeps the text',
+      restored.items.first.text, board.items.first.text);
+  check('the round-trip keeps the id', restored.items.first.id == board.items.first.id);
+
+  final dir = Directory.systemTemp.createTempSync('expa_tasks');
+  try {
+    final store = TaskStore(root: dir.path);
+    store.save(board);
+    final loaded = store.load();
+    checkEquals('the file store round-trips', loaded.count, board.count);
+    check('the file store keeps the done flag',
+        loaded.items.first.done == board.items.first.done);
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
   board.clear();
   check('clear empties the board', board.isEmpty);
 }
@@ -451,6 +472,46 @@ void _browser() {
   checkEquals('about:blank is not recorded', history.entries.length, 3);
   history.clear();
   check('clear empties the history', history.entries.isEmpty && history.index == -1);
+
+  final tabs = BrowserTabs(home: 'https://start.example');
+  checkEquals('one starting tab', tabs.count, 1);
+  check('the last tab cannot be closed', !tabs.canClose);
+  final second = tabs.add(url: 'https://second.example');
+  checkEquals('a tab was added', tabs.count, 2);
+  checkEquals('the new tab is active', tabs.active.id, second.id);
+  check('tabs can close once there are two', tabs.canClose);
+  tabs.update(title: 'Second');
+  checkEquals('the title sticks', tabs.active.title, 'Second');
+  tabs.select(tabs.tabs.first.id);
+  checkEquals('selecting works', tabs.active.url, 'https://start.example');
+  check('closing the inactive tab keeps the active one',
+      tabs.close(second.id) == false);
+  checkEquals('one tab left', tabs.count, 1);
+  check('the last tab is still protected', !tabs.close(tabs.active.id));
+
+  tabs.toggleBookmark('https://start.example');
+  check('bookmark added', tabs.isBookmarked('https://start.example'));
+  tabs.toggleBookmark('https://start.example');
+  check('bookmark removed', !tabs.isBookmarked('https://start.example'));
+  tabs.toggleBookmark('https://start.example');
+  final session = BrowserTabs.fromJson(tabs.toJson());
+  checkEquals('the session keeps its tab', session.count, 1);
+  checkEquals('the session keeps the active URL', session.active.url,
+      'https://start.example');
+  check('the session keeps bookmarks',
+      session.isBookmarked('https://start.example'));
+}
+
+void _display() {
+  section('display math');
+  checkClose('a fractional value passes through',
+      normalizeBrightness(0.7)!, 0.7, 0.0001);
+  checkClose('percent is normalized', normalizeBrightness(70)!, 0.7, 0.0001);
+  check('a dead DDC reader returns null', normalizeBrightness(0) == null);
+  check('negative is null', normalizeBrightness(-1) == null);
+  check('NaN is null', normalizeBrightness(double.nan) == null);
+  check('null is null', normalizeBrightness(null) == null);
+  checkClose('above one is clamped', normalizeBrightness(1.2)!, 1.0, 0.0001);
 }
 
 void main() async {

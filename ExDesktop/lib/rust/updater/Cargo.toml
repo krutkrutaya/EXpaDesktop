@@ -1,0 +1,10 @@
+[package]
+name = "updater"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "updater"
+path = "src/main.rs"
+
+[dependencies]
