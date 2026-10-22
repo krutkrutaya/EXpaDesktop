@@ -4,6 +4,7 @@
 // walks the disk. Sorting is part of the model: folders first, then names,
 // case-insensitively — the order Explorer uses, which is what the eye expects.
 
+import 'music_library.dart';
 class FileEntry {
   const FileEntry({
     required this.name,
@@ -25,6 +26,9 @@ class FileEntry {
 
   bool get isImage =>
       const ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].contains(extension);
+
+  /// True for the formats the player can add to the library.
+  bool get isAudio => !isDirectory && audioExtensions.contains(extension);
   bool get isText => const [
         'txt',
         'md',

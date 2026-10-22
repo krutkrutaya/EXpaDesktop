@@ -9,6 +9,8 @@
 import 'dart:async';
 import 'dart:convert' show jsonDecode;
 import 'dart:ffi' hide Size;
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:ui' as ui;
 import 'dart:ui' show ImageFilter;
 
@@ -17,6 +19,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import 'apps/audio_pick.dart';
+import 'apps/music_library.dart';
+import 'apps/music_scanner.dart';
 import 'command_router.dart';
 import 'desktop/app_catalog.dart';
 import 'desktop/app_icons.dart';
@@ -121,6 +126,30 @@ class _MyHomePageState extends State<MyHomePage>
   Timer? _backgroundTimer;
   Timer? _radioTimer;
   Timer? _replyTimer;
+
+  /// Bumped when the wallpaper changes on its own (the 12 s slideshow).
+  /// The wallpaper redraws; the shell — and every open window — does not.
+  final ValueNotifier<int> _wallpaperTick = ValueNotifier<int>(0);
+
+  /// Bumped when a radio reading lands, so only the waybar rebuilds.
+  final ValueNotifier<int> _waybarTick = ValueNotifier<int>(0);
+
+  /// Where the user's imported tracks live and how they are imported.
+  final MusicLibrary _library = MusicLibrary();
+
+  /// Set while Musics is waiting for a file from the Files window.
+  final ValueNotifier<AudioPickRequest?> _pickRequest =
+      ValueNotifier<AudioPickRequest?>(null);
+
+  /// A short "Added: …" line in Musics.
+  final ValueNotifier<String?> _musicNotice = ValueNotifier<String?>(null);
+  Timer? _noticeTimer;
+
+  /// Bundled tracks come from the asset scan; file tracks from the library.
+  List<Track> _assetTracks = _seedTracks;
+  List<Track> _fileTracks = const [];
+  Map<String, Uint8List> _assetCovers = const {};
+  Map<String, Uint8List> _fileCovers = const {};
 
   bool _isDesktopsHovered = false;
 
@@ -246,9 +275,12 @@ class _MyHomePageState extends State<MyHomePage>
       unawaited(_refreshRadios());
     });
     _backgroundTimer = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (mounted) setState(_workspaces.cycleBackground);
+      if (!mounted) return;
+      _workspaces.cycleBackground();
+      _wallpaperTick.value++;
     });
     unawaited(_scanMusicAssets());
+    unawaited(_loadFileLibrary());
   }
 
   @override
@@ -319,6 +351,11 @@ class _MyHomePageState extends State<MyHomePage>
     _backgroundTimer?.cancel();
     _radioTimer?.cancel();
     _replyTimer?.cancel();
+    _wallpaperTick.dispose();
+    _waybarTick.dispose();
+    _pickRequest.dispose();
+    _musicNotice.dispose();
+    _noticeTimer?.cancel();
     _brightnessFx?.cancel();
     _contrastFx?.cancel();
     _warmthFx?.cancel();
@@ -372,7 +409,56 @@ class _MyHomePageState extends State<MyHomePage>
     }
 
     if (!mounted) return;
-    _player.setTracks(tracks, covers);
+    _assetTracks = tracks;
+    _assetCovers = covers;
+    _publishTracks();
+  }
+
+  /// Rebuilds the player's library from the bundled tracks and the files the
+  /// user added. Both scans land independently; whichever finishes last still
+  /// sees both lists.
+  void _publishTracks() {
+    _player.setTracks(
+      [..._assetTracks, ..._fileTracks],
+      {..._assetCovers, ..._fileCovers},
+    );
+  }
+
+  /// Imported tracks get a `library/` key prefix, so a file that happens to
+  /// share a name with a bundled asset cannot steal its cover.
+  Track _keyedFileTrack(Track track) => Track(
+        title: track.title,
+        artist: track.artist,
+        file: 'library/${track.file}',
+        path: track.path,
+        avatar: track.avatar,
+        duration: track.duration,
+      );
+
+  /// Reads `%APPDATA%\EXpaDesktop\Music` off the UI thread.
+  Future<void> _loadFileLibrary() async {
+    final directory = _library.musicDir;
+    final cache = _library.coverCacheDir;
+    List<LibraryTrack> scanned;
+    try {
+      // The Rust scanner is one native pass (and it extracts the covers);
+      // without the DLL the same job is done in Dart inside an isolate.
+      final native = await MusicScanner.scan(directory, cache);
+      scanned = native ?? await Isolate.run(() => scanMusicDirectory(directory));
+    } catch (_) {
+      scanned = const [];
+    }
+    if (!mounted || scanned.isEmpty) return;
+    final tracks = <Track>[];
+    final covers = <String, Uint8List>{};
+    for (final entry in scanned) {
+      final keyed = _keyedFileTrack(entry.track);
+      tracks.add(keyed);
+      if (entry.cover != null) covers[keyed.file] = entry.cover!;
+    }
+    _fileTracks = tracks;
+    _fileCovers = covers;
+    _publishTracks();
   }
 
   static const String _musicPrefix = 'assets/music/';
@@ -716,6 +802,62 @@ class _MyHomePageState extends State<MyHomePage>
     }
   }
 
+  // ---- adding music ---------------------------------------------------------
+
+  /// Musics' Add track button: ask the Files window for an audio file.
+  void _requestAddTrack() {
+    if (_pickRequest.value != null) return;
+    _pickRequest.value = AudioPickRequest(
+      onPick: (path) => unawaited(_importAudio(path)),
+      onCancel: () => _pickRequest.value = null,
+    );
+    _openApp(ShellApp.files);
+  }
+
+  /// Copies the chosen file into the library, reads its tags off the UI
+  /// thread and puts it in the player's list.
+  Future<void> _importAudio(String sourcePath) async {
+    _pickRequest.value = null;
+    final destination = await _library.import(sourcePath);
+    if (!mounted) return;
+    if (destination == null) {
+      _showMusicNotice('That file could not be added');
+      return;
+    }
+    final root = _library.musicDir;
+    LibraryTrack? scanned;
+    try {
+      scanned = await Isolate.run(
+        () => readLibraryTrack(File(destination), root),
+      );
+    } catch (_) {
+      scanned = null;
+    }
+    if (!mounted) return;
+    if (scanned == null) {
+      _showMusicNotice('Could not read that file');
+      return;
+    }
+    final keyed = _keyedFileTrack(scanned.track);
+    _fileTracks = [..._fileTracks, keyed];
+    if (scanned.cover != null) {
+      _fileCovers = {..._fileCovers, keyed.file: scanned.cover!};
+    }
+    _publishTracks();
+    final musics = _windows.forApp(ShellApp.musics.id);
+    if (musics != null) _windows.focus(musics.id);
+    setState(() {});
+    _showMusicNotice('Added: ${keyed.title}');
+  }
+
+  void _showMusicNotice(String text) {
+    _musicNotice.value = text;
+    _noticeTimer?.cancel();
+    _noticeTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) _musicNotice.value = null;
+    });
+  }
+
   Widget _windowContent(AppWindow window) {
     switch (window.app) {
       case ShellApp.calculator:
@@ -723,7 +865,7 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.notepad:
         return const NotepadApp();
       case ShellApp.files:
-        return const FilesApp();
+        return FilesApp(audioPick: _pickRequest);
       case ShellApp.paint:
         return const PaintApp();
       case ShellApp.snip:
@@ -733,7 +875,11 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.browser:
         return const BrowserApp();
       case ShellApp.musics:
-        return MusicsApp(player: _player);
+        return MusicsApp(
+          player: _player,
+          onAddTrack: _requestAddTrack,
+          notice: _musicNotice,
+        );
       case ShellApp.settings:
         return SettingsView(
           navigator: _settingsNav,
@@ -825,10 +971,11 @@ class _MyHomePageState extends State<MyHomePage>
     final wifi = await _radioSource.status(RadioKind.wifi);
     final bluetooth = await _radioSource.status(RadioKind.bluetooth);
     if (!mounted) return;
-    setState(() {
-      _wifiStatus = wifi;
-      _bluetoothStatus = bluetooth;
-    });
+    _wifiStatus = wifi;
+    _bluetoothStatus = bluetooth;
+    // Only the waybar reads these; a full shell rebuild every 45 s was
+    // rebuilding every open window for two icons.
+    _waybarTick.value++;
   }
 
   // ---- the command line ------------------------------------------------------
@@ -984,13 +1131,12 @@ class _MyHomePageState extends State<MyHomePage>
   Future<RadioStatus> setRadioPower(RadioKind kind, bool on) async {
     final result = await _radioSource.setPower(kind, on);
     if (mounted) {
-      setState(() {
-        if (kind == RadioKind.wifi) {
-          _wifiStatus = result.status;
-        } else {
-          _bluetoothStatus = result.status;
-        }
-      });
+      if (kind == RadioKind.wifi) {
+        _wifiStatus = result.status;
+      } else {
+        _bluetoothStatus = result.status;
+      }
+      _waybarTick.value++;
     }
     return result.status;
   }
@@ -1047,6 +1193,48 @@ class _MyHomePageState extends State<MyHomePage>
 
   // === part 3 ===
 
+  Widget _buildWallpaper() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 1400),
+      switchInCurve: Curves.fastOutSlowIn,
+      switchOutCurve: Curves.fastOutSlowIn,
+      layoutBuilder: (currentChild, previousChildren) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            ...previousChildren,
+            if (currentChild != null) currentChild,
+          ],
+        );
+      },
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 1.03, end: 1.0).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        key: ValueKey<String>(
+          '${_workspaces.activeIndex}-'
+          '${_workspaces.active.backgroundIndex}',
+        ),
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage(
+              _backgrounds[
+                  _workspaces.active.backgroundIndex % _backgrounds.length],
+            ),
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.medium,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const panelWidth = 72.0;
@@ -1061,43 +1249,14 @@ class _MyHomePageState extends State<MyHomePage>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 1400),
-              switchInCurve: Curves.fastOutSlowIn,
-              switchOutCurve: Curves.fastOutSlowIn,
-              layoutBuilder: (currentChild, previousChildren) {
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ...previousChildren,
-                    if (currentChild != null) currentChild,
-                  ],
-                );
-              },
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: ScaleTransition(
-                    scale: Tween<double>(begin: 1.03, end: 1.0)
-                        .animate(animation),
-                    child: child,
-                  ),
-                );
-              },
-              child: Container(
-                key: ValueKey<String>(
-                  '${_workspaces.activeIndex}-'
-                  '${_workspaces.active.backgroundIndex}',
-                ),
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage(
-                      _backgrounds[_workspaces.active.backgroundIndex %
-                          _backgrounds.length],
-                    ),
-                    fit: BoxFit.cover,
-                    filterQuality: FilterQuality.high,
-                  ),
+            // Only this layer rebuilds on the 12 s slideshow tick: the shell
+            // used to setState there, which rebuilt every open app window on
+            // a timer and made the desktop hitch once a minute.
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: ValueListenableBuilder<int>(
+                  valueListenable: _wallpaperTick,
+                  builder: (context, _, __) => _buildWallpaper(),
                 ),
               ),
             ),
@@ -1164,17 +1323,20 @@ class _MyHomePageState extends State<MyHomePage>
             Positioned(
               top: 0,
               left: size.width / 2 - ShellLayout.waybarWidth / 2,
-              child: _Waybar(
-                key: const ValueKey('waybar'),
-                player: _player,
-                onPlayer: _togglePlayer,
-                onBrightness: _toggleBrightness,
-                wifiOn: _wifiStatus.isOn,
-                bluetoothOn: _bluetoothStatus.isOn,
-                muted: _muted,
-                onWifi: () => _openSettingsAt('wifi'),
-                onBluetooth: () => _openSettingsAt('bluetooth'),
-                onVolume: _toggleVolume,
+              child: ValueListenableBuilder<int>(
+                valueListenable: _waybarTick,
+                builder: (context, _, __) => _Waybar(
+                  key: const ValueKey('waybar'),
+                  player: _player,
+                  onPlayer: _togglePlayer,
+                  onBrightness: _toggleBrightness,
+                  wifiOn: _wifiStatus.isOn,
+                  bluetoothOn: _bluetoothStatus.isOn,
+                  muted: _muted,
+                  onWifi: () => _openSettingsAt('wifi'),
+                  onBluetooth: () => _openSettingsAt('bluetooth'),
+                  onVolume: _toggleVolume,
+                ),
               ),
             ),
             // ---- brightness flyout -----------------------------------------
@@ -1326,12 +1488,16 @@ class _MyHomePageState extends State<MyHomePage>
                               spacing: 6,
                               runSpacing: 6,
                               children: [
-                                for (final app in _launcherApps)
-                                  _LauncherTile(
-                                    key: ValueKey('launcher-app-${app.id}'),
-                                    icon: iconForApp(app),
-                                    label: app.title,
-                                    onTap: () => _openApp(app),
+                                for (var i = 0; i < _launcherApps.length; i++)
+                                  _LauncherEntrance(
+                                    index: i,
+                                    child: _LauncherTile(
+                                      key: ValueKey(
+                                          'launcher-app-${_launcherApps[i].id}'),
+                                      icon: iconForApp(_launcherApps[i]),
+                                      label: _launcherApps[i].title,
+                                      onTap: () => _openApp(_launcherApps[i]),
+                                    ),
                                   ),
                               ],
                             ),
@@ -2304,6 +2470,66 @@ class _PowerButtonState extends State<_PowerButton> {
             child: Icon(widget.icon, color: Colors.white, size: 21),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One launcher tile, staggered in when the launcher opens.
+class _LauncherEntrance extends StatefulWidget {
+  final int index;
+  final Widget child;
+
+  const _LauncherEntrance({required this.index, required this.child});
+
+  @override
+  State<_LauncherEntrance> createState() => _LauncherEntranceState();
+}
+
+class _LauncherEntranceState extends State<_LauncherEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _reveal = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+
+  late final CurvedAnimation _fade =
+      CurvedAnimation(parent: _reveal, curve: Curves.easeOut);
+
+  late final CurvedAnimation _pop = CurvedAnimation(
+    parent: _reveal,
+    curve: Curves.easeOutBack,
+  );
+
+  Timer? _delay;
+
+  @override
+  void initState() {
+    super.initState();
+    _delay = Timer(
+      Duration(milliseconds: 30 + widget.index * 22),
+      () {
+        if (mounted) _reveal.forward();
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _delay?.cancel();
+    _fade.dispose();
+    _pop.dispose();
+    _reveal.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.82, end: 1.0).animate(_pop),
+        child: widget.child,
       ),
     );
   }

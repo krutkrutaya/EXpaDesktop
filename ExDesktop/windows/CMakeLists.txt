@@ -115,6 +115,16 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
 
+# The Rust music scanner is optional too: one native pass over the library
+# with cover extraction. Without it the Dart scanner is used.
+set(MUSIC_SCAN_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../lib/rust/music_scan/music_scan.dll")
+if(EXISTS "${MUSIC_SCAN_DLL}")
+  install(FILES "${MUSIC_SCAN_DLL}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+else()
+  message(STATUS "music_scan.dll not found - the Dart music scanner will be used")
+endif()
+
 # The brightness controller (DDC/CI + gamma) is a native library that the
 # Dart side loads by name, so it has to sit next to the exe. It is not in the
 # repo (build it with `cargo build --release` in lib/rust); when it is missing

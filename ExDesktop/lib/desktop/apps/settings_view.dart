@@ -501,16 +501,32 @@ class _SettingsViewState extends State<SettingsView> {
         ),
       );
     }
-    return GlassPanel(
-      padding: const EdgeInsets.all(20),
-      child: switch (item.section) {
-        'sound' => _soundPane(item),
-        'wifi' => _radioPane(item, RadioKind.wifi),
-        'bluetooth' => _radioPane(item, RadioKind.bluetooth),
-        'display' => _displayPane(item),
-        'wallpaper' => _wallpaperPane(item),
-        _ => _windowsPane(item),
-      },
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0.02, 0),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
+      ),
+      child: GlassPanel(
+        key: ValueKey<String>(item.id),
+        padding: const EdgeInsets.all(20),
+        child: switch (item.section) {
+          'sound' => _soundPane(item),
+          'wifi' => _radioPane(item, RadioKind.wifi),
+          'bluetooth' => _radioPane(item, RadioKind.bluetooth),
+          'display' => _displayPane(item),
+          'wallpaper' => _wallpaperPane(item),
+          _ => _windowsPane(item),
+        },
+      ),
     );
   }
 

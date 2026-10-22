@@ -236,6 +236,9 @@ class _FakeAudio implements AudioEngine {
   Future<void> playAsset(String asset) async => calls.add('play');
 
   @override
+  Future<void> playFile(String path) async => calls.add('playFile');
+
+  @override
   Future<void> pause() async => calls.add('pause');
 
   @override

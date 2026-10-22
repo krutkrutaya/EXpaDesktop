@@ -4,13 +4,25 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../apps/audio_pick.dart';
 import '../../apps/files_model.dart';
 import '../../ui/glass.dart';
 
 class FilesApp extends StatefulWidget {
-  const FilesApp({super.key});
+  /// Started somewhere else by the tests.
+  final String? startPath;
+
+  /// A fake listing for the tests; the default walks the disk.
+  final EntryLister? lister;
+
+  /// Set while Musics wants an audio file: the window then shows a picker
+  /// banner and a Use button on audio rows.
+  final ValueListenable<AudioPickRequest?>? audioPick;
+
+  const FilesApp({super.key, this.startPath, this.lister, this.audioPick});
 
   @override
   State<FilesApp> createState() => _FilesAppState();
@@ -30,8 +42,36 @@ class _FilesAppState extends State<FilesApp> {
   @override
   void initState() {
     super.initState();
-    _model = FilesModel(lister: _listDisk, start: _home);
-    unawaited(_model.open(_home).then((_) => _refresh()));
+    final start = widget.startPath ?? _home;
+    _model = FilesModel(lister: widget.lister ?? _listDisk, start: start);
+    unawaited(_model.open(start).then((_) => _refresh()));
+    widget.audioPick?.addListener(_onPickChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant FilesApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.audioPick == widget.audioPick) return;
+    oldWidget.audioPick?.removeListener(_onPickChanged);
+    widget.audioPick?.addListener(_onPickChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.audioPick?.removeListener(_onPickChanged);
+    super.dispose();
+  }
+
+  void _onPickChanged() {
+    if (mounted) setState(() {});
+  }
+
+  AudioPickRequest? get _pickRequest => widget.audioPick?.value;
+
+  void _pick(FileEntry entry) {
+    final request = _pickRequest;
+    if (request == null || !request.accepts(entry.path)) return;
+    request.onPick(entry.path);
   }
 
   Future<void> _refresh() async {
@@ -107,7 +147,67 @@ class _FilesAppState extends State<FilesApp> {
       if (mounted) setState(() {});
       return;
     }
+    final request = _pickRequest;
+    if (request != null && request.accepts(entry.path)) {
+      _pick(entry);
+      return;
+    }
     await _select(entry);
+  }
+
+  Widget _audioPickBanner() {
+    final request = _pickRequest;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => SizeTransition(
+        sizeFactor: animation,
+        child: FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.2),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        ),
+      ),
+      child: request == null
+          ? const SizedBox(
+              key: ValueKey('no-audio-pick'),
+              width: double.infinity,
+            )
+          : Padding(
+              key: const ValueKey('audio-pick-banner'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GlassPanel(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                color: const Color(0x2A9AD0FF),
+                borderColor: const Color(0x559AD0FF),
+                child: Row(
+                  children: [
+                    const Icon(Icons.library_music_outlined,
+                        size: 16, color: Color(0xFF9AD0FF)),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Choose an audio file to add to Musics',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    PillButton(
+                      key: const ValueKey('audio-pick-cancel'),
+                      label: 'Cancel',
+                      onTap: () => request.onCancel?.call(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
   }
 
   @override
@@ -169,6 +269,8 @@ class _FilesAppState extends State<FilesApp> {
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          _audioPickBanner(),
           const SizedBox(height: 8),
           Expanded(
             child: Row(
@@ -196,6 +298,9 @@ class _FilesAppState extends State<FilesApp> {
                                 key: ValueKey('files-entry-${entry.name}'),
                                 entry: entry,
                                 selected: _selected?.path == entry.path,
+                                pickable: _pickRequest != null &&
+                                    _pickRequest!.accepts(entry.path),
+                                onPick: () => _pick(entry),
                                 onTap: () => unawaited(_select(entry)),
                                 onOpen: () => unawaited(_open(entry)),
                               );
@@ -235,9 +340,11 @@ class _FilesAppState extends State<FilesApp> {
                     Icon(
                       entry.isDirectory
                           ? Icons.folder_outlined
-                          : entry.isImage
-                              ? Icons.image_outlined
-                              : Icons.description_outlined,
+                          : entry.isAudio
+                              ? Icons.audiotrack_rounded
+                              : entry.isImage
+                                  ? Icons.image_outlined
+                                  : Icons.description_outlined,
                       size: 16,
                       color: Colors.white54,
                     ),
@@ -259,9 +366,22 @@ class _FilesAppState extends State<FilesApp> {
                 const SizedBox(height: 4),
                 Caption(entry.isDirectory
                     ? 'Folder'
-                    : FilesModel.formatSize(entry.size)),
+                    : entry.isAudio
+                        ? 'Audio · ${FilesModel.formatSize(entry.size)}'
+                        : FilesModel.formatSize(entry.size)),
                 const SizedBox(height: 8),
-                Expanded(child: _previewBody(entry)),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: KeyedSubtree(
+                      key: ValueKey<String>(
+                          '${entry.path}-$_loadingPreview'),
+                      child: _previewBody(entry),
+                    ),
+                  ),
+                ),
                 if (!entry.isDirectory) ...[
                   const SizedBox(height: 8),
                   PillButton(
@@ -278,6 +398,33 @@ class _FilesAppState extends State<FilesApp> {
   Widget _previewBody(FileEntry entry) {
     if (entry.isDirectory) {
       return const Center(child: Caption('Double-click to open the folder'));
+    }
+    if (entry.isAudio) {
+      final request = _pickRequest;
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.audiotrack_rounded,
+              size: 42,
+              color: const Color(0xFF9AD0FF).withValues(alpha: 0.7),
+            ),
+            const SizedBox(height: 8),
+            Caption('${entry.extension.toUpperCase()} audio file'),
+            const SizedBox(height: 10),
+            if (request != null)
+              PillButton(
+                key: const ValueKey('preview-pick'),
+                label: 'Add to Musics',
+                icon: Icons.playlist_add_rounded,
+                onTap: () => _pick(entry),
+              )
+            else
+              const Caption('Open Musics → Add track to import it'),
+          ],
+        ),
+      );
     }
     if (_loadingPreview) {
       return const Center(
@@ -377,6 +524,8 @@ class _CrumbButtonState extends State<_CrumbButton> {
 class _EntryRow extends StatefulWidget {
   final FileEntry entry;
   final bool selected;
+  final bool pickable;
+  final VoidCallback onPick;
   final VoidCallback onTap;
   final VoidCallback onOpen;
 
@@ -384,6 +533,8 @@ class _EntryRow extends StatefulWidget {
     super.key,
     required this.entry,
     required this.selected,
+    required this.pickable,
+    required this.onPick,
     required this.onTap,
     required this.onOpen,
   });
@@ -398,50 +549,78 @@ class _EntryRowState extends State<_EntryRow> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
+    final content = Row(
+      children: [
+        Icon(
+          entry.isDirectory
+              ? Icons.folder_rounded
+              : entry.isAudio
+                  ? Icons.audiotrack_rounded
+                  : entry.isImage
+                      ? Icons.image_outlined
+                      : Icons.insert_drive_file_outlined,
+          size: 15,
+          color: entry.isDirectory
+              ? const Color(0xFFFFC98A)
+              : entry.isAudio
+                  ? const Color(0xFF9AD0FF)
+                  : Colors.white38,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            entry.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        onDoubleTap: widget.onOpen,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(
-              alpha: widget.selected ? 0.14 : (_hovered ? 0.07 : 0.0),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(
+            alpha: widget.selected ? 0.14 : (_hovered ? 0.07 : 0.0),
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            // The tap/double-tap area stops before the Use button: an ancestor
+            // double-tap recogniser would make the button wait ~300 ms for a
+            // second click that is never coming.
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onTap,
+                onDoubleTap: widget.onOpen,
+                child: content,
+              ),
             ),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                entry.isDirectory
-                    ? Icons.folder_rounded
-                    : entry.isImage
-                        ? Icons.image_outlined
-                        : Icons.insert_drive_file_outlined,
-                size: 15,
-                color: entry.isDirectory
-                    ? const Color(0xFFFFC98A)
-                    : Colors.white38,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  entry.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
+            if (widget.pickable)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: PillButton(
+                  key: ValueKey('files-pick-${entry.name}'),
+                  label: 'Use',
+                  icon: Icons.add_rounded,
+                  onTap: widget.onPick,
                 ),
+              )
+            else if (!entry.isDirectory)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Caption(FilesModel.formatSize(entry.size), size: 10),
               ),
-              if (!entry.isDirectory)
-                Caption(FilesModel.formatSize(entry.size), size: 10),
-            ],
-          ),
+          ],
         ),
       ),
     );

@@ -44,6 +44,8 @@ class WaveSlider extends StatefulWidget {
 class _WaveSliderState extends State<WaveSlider>
     with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
+  bool _ticking = false;
+  double _lastElapsed = 0;
   bool _hover = false;
   bool _drag = false;
   double _amp = 0.16;
@@ -63,13 +65,18 @@ class _WaveSliderState extends State<WaveSlider>
     super.initState();
     _value = _target = widget.value.clamp(0.0, 1.0);
     _ticker = createTicker(_tick);
-    _ticker.start();
+    // Deliberately not started: an idle slider must not repaint the whole
+    // window 60 times a second. The wave only flows while it is hovered,
+    // dragged, or chasing a new value.
   }
 
   @override
   void didUpdateWidget(covariant WaveSlider old) {
     super.didUpdateWidget(old);
-    if (!_drag) _target = widget.value.clamp(0.0, 1.0);
+    if (!_drag && widget.value != _target) {
+      _target = widget.value.clamp(0.0, 1.0);
+      _wake();
+    }
   }
 
   @override
@@ -78,22 +85,52 @@ class _WaveSliderState extends State<WaveSlider>
     super.dispose();
   }
 
+  /// Starts the ticker if it is asleep. Safe to call on every interaction.
+  void _wake() {
+    if (_ticking) return;
+    _ticking = true;
+    _lastElapsed = 0;
+    _ticker.start();
+  }
+
   void _tick(Duration elapsed) {
-    final t = math.min(elapsed.inMicroseconds / 1e6, 0.05);
-    if (t <= 0) return;
+    final seconds = elapsed.inMicroseconds / 1e6;
+    var dt = seconds - _lastElapsed;
+    _lastElapsed = seconds;
+    if (dt <= 0) return;
+    // A long frame must not teleport the thumb or the wave.
+    dt = dt.clamp(0.0, 0.05);
+
     // Chase the target (20/s: smooth but within arm's reach).
-    _value += (_target - _value) * (1 - math.exp(-t * 20));
+    _value += (_target - _value) * (1 - math.exp(-dt * 20));
     if ((_target - _value).abs() < 0.0004) _value = _target;
-    final target = _drag ? 1.0 : (_hover ? 0.45 : 0.16);
-    _amp += (target - _amp) * (1 - math.exp(-t * 9));
-    _phase += t * (_drag ? 9.0 : 0.7);
+
+    final wantedAmp = _drag ? 1.0 : (_hover ? 0.45 : 0.16);
+    _amp += (wantedAmp - _amp) * (1 - math.exp(-dt * 9));
+    _phase += dt * (_drag ? 9.0 : 0.7);
     // While dragging the droplet holds its shape; the pull relaxes right
     // after the finger leaves it.
-    _stretch *= math.exp(-t * (_drag ? 6 : 13));
+    _stretch *= math.exp(-dt * (_drag ? 6 : 13));
     if (_stretch.abs() < 0.05) _stretch = 0;
-    final st = (_hover || _drag) ? 1.35 : 1.0;
-    _scale += (st - _scale) * (1 - math.exp(-t * 14));
+    final wantedScale = (_hover || _drag) ? 1.35 : 1.0;
+    _scale += (wantedScale - _scale) * (1 - math.exp(-dt * 14));
+
     setState(() {});
+
+    // Everything that needs frames is either an active interaction or a
+    // value/amplitude/scale still in motion. When all of them have settled,
+    // the ticker stops and the slider costs nothing until touched again.
+    final settled = !_drag &&
+        !_hover &&
+        (_target - _value).abs() < 0.0005 &&
+        (wantedAmp - _amp).abs() < 0.002 &&
+        (wantedScale - _scale).abs() < 0.002 &&
+        _stretch == 0;
+    if (settled) {
+      _ticking = false;
+      _lastElapsed = 0;
+      _ticker.stop();
+    }
   }
 
   double _padFor(double radius) => radius * 1.35 + 2;
@@ -107,6 +144,7 @@ class _WaveSliderState extends State<WaveSlider>
   void _apply(double v) {
     _target = v.clamp(0.0, 1.0);
     setState(() => _value = _target);
+    _wake();
     widget.onChanged(_target);
   }
 
@@ -114,8 +152,14 @@ class _WaveSliderState extends State<WaveSlider>
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+      onEnter: (_) {
+        setState(() => _hover = true);
+        _wake();
+      },
+      onExit: (_) {
+        setState(() => _hover = false);
+        _wake();
+      },
       child: LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
@@ -129,6 +173,7 @@ class _WaveSliderState extends State<WaveSlider>
               _dragStartValue = _value;
               _target = _value;
               setState(() => _drag = true);
+              _wake();
             },
             onHorizontalDragUpdate: (d) {
               final pad = _padFor(widget.thumbRadius);
@@ -143,26 +188,30 @@ class _WaveSliderState extends State<WaveSlider>
             },
             onHorizontalDragEnd: (_) {
               setState(() => _drag = false);
+              _wake();
               widget.onChangeEnd?.call(_value);
             },
             onHorizontalDragCancel: () {
               setState(() => _drag = false);
+              _wake();
               widget.onChangeEnd?.call(_value);
             },
             child: SizedBox(
               height: widget.height,
-              child: CustomPaint(
-                size: Size(width, widget.height),
-                painter: _WavePainter(
-                  value: _value,
-                  amp: _amp,
-                  phase: _phase,
-                  stretch: _stretch,
-                  thumbScale: _scale,
-                  activeColor: widget.activeColor,
-                  inactiveColor: widget.inactiveColor,
-                  thumbColor: widget.thumbColor,
-                  thumbRadius: widget.thumbRadius,
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  size: Size(width, widget.height),
+                  painter: _WavePainter(
+                    value: _value,
+                    amp: _amp,
+                    phase: _phase,
+                    stretch: _stretch,
+                    thumbScale: _scale,
+                    activeColor: widget.activeColor,
+                    inactiveColor: widget.inactiveColor,
+                    thumbColor: widget.thumbColor,
+                    thumbRadius: widget.thumbRadius,
+                  ),
                 ),
               ),
             ),
@@ -262,5 +311,14 @@ class _WavePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _WavePainter old) => true;
+  bool shouldRepaint(covariant _WavePainter old) =>
+      old.value != value ||
+      old.amp != amp ||
+      old.phase != phase ||
+      old.stretch != stretch ||
+      old.thumbScale != thumbScale ||
+      old.activeColor != activeColor ||
+      old.inactiveColor != inactiveColor ||
+      old.thumbColor != thumbColor ||
+      old.thumbRadius != thumbRadius;
 }

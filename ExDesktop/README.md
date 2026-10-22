@@ -14,8 +14,8 @@ how the system layer talks to Windows, and what the tests cover — lives in the
 ```powershell
 flutter pub get
 flutter analyze            # should print: No issues found!
-flutter test               # 53 widget tests
-dart run test/mock_all.dart   # 1185 mock checks (plain Dart, no Flutter needed)
+flutter test               # 61 widget tests
+dart run test/mock_all.dart   # 1254 mock checks (plain Dart, no Flutter needed)
 
 flutter run -d windows     # debug, hot reload
 flutter build windows --release

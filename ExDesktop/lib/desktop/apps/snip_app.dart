@@ -92,34 +92,41 @@ class _SnipAppState extends State<SnipApp> {
           Expanded(
             child: GlassPanel(
               padding: const EdgeInsets.all(8),
-              child: _shot == null
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.photo_camera_outlined,
-                            size: 42,
-                            color: Colors.white.withValues(alpha: 0.18),
-                          ),
-                          const SizedBox(height: 10),
-                          Caption(
-                            available
-                                ? 'The shot shows EXpaDesktop itself.\n'
-                                    'Nothing opens outside the shell.'
-                                : 'Screen capture is not available here.',
-                          ),
-                        ],
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 260),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: _shot == null
+                    ? Center(
+                        key: const ValueKey('snip-empty'),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.photo_camera_outlined,
+                              size: 42,
+                              color: Colors.white.withValues(alpha: 0.18),
+                            ),
+                            const SizedBox(height: 10),
+                            Caption(
+                              available
+                                  ? 'The shot shows EXpaDesktop itself.\n'
+                                      'Nothing opens outside the shell.'
+                                  : 'Screen capture is not available here.',
+                            ),
+                          ],
+                        ),
+                      )
+                    : ClipRRect(
+                        key: ValueKey<int>(_shot!.length),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.memory(
+                          _shot!,
+                          fit: BoxFit.contain,
+                          gaplessPlayback: true,
+                        ),
                       ),
-                    )
-                  : ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.memory(
-                        _shot!,
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                      ),
-                    ),
+              ),
             ),
           ),
         ],

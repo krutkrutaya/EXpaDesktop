@@ -1,0 +1,10 @@
+[package]
+name = "music_scan"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "music_scan"
+crate-type = ["cdylib"]
+
+[dependencies]

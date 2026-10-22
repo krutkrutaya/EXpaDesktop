@@ -10,6 +10,7 @@
 
 import 'apps_check.dart' as apps;
 import 'desktop_check.dart' as desktop;
+import 'library_check.dart' as musiclib;
 import 'liquid_glass_mock_check.dart' as physics;
 import 'playback_check.dart' as playback;
 import 'shell_check.dart' as shell;
@@ -20,6 +21,7 @@ Future<void> main() async {
   desktop.runDesktopChecks();
   playback.runPlaybackChecks();
   await apps.runAppsChecks();
+  await musiclib.runLibraryChecks();
   physics.runPhysicsChecks();
   shell.runShellChecks();
   await system.runSystemChecks();

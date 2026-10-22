@@ -29,6 +29,9 @@ import 'track.dart';
 /// The audio operations the controller needs.
 abstract class AudioEngine {
   Future<void> playAsset(String asset);
+
+  /// Plays a file from disk (an imported track).
+  Future<void> playFile(String path);
   Future<void> pause();
   Future<void> resume();
   Future<void> stop();
@@ -49,6 +52,9 @@ class AudioPlayersEngine implements AudioEngine {
 
   @override
   Future<void> playAsset(String asset) => _player.play(AssetSource(asset));
+
+  @override
+  Future<void> playFile(String path) => _player.play(DeviceFileSource(path));
 
   @override
   Future<void> pause() => _player.pause();
@@ -266,7 +272,11 @@ class PlayerController extends ChangeNotifier {
     if (current == null || current.file.isEmpty) return;
     final token = ++_fadeToken;
     await _engine.setVolume(0.0);
-    await _engine.playAsset('music/${current.file}');
+    if (current.isFile) {
+      await _engine.playFile(current.path);
+    } else {
+      await _engine.playAsset('music/${current.file}');
+    }
     _isLoaded = true;
     unawaited(_fadeIn(token));
   }

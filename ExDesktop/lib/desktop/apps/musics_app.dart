@@ -5,6 +5,7 @@
 // and a seek bar that shows the real timecode. The cover does not spin here —
 // spinning belongs to the waybar art — it breathes with the beat instead.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -18,7 +19,18 @@ import '../../track_art.dart';
 class MusicsApp extends StatelessWidget {
   final PlayerController player;
 
-  const MusicsApp({super.key, required this.player});
+  /// Opens the in-app file picker to add a track to the library.
+  final VoidCallback? onAddTrack;
+
+  /// A short "Added: …" line that fades away on its own.
+  final ValueListenable<String?>? notice;
+
+  const MusicsApp({
+    super.key,
+    required this.player,
+    this.onAddTrack,
+    this.notice,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +88,64 @@ class MusicsApp extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 14),
-                    Expanded(child: _TrackList(player: player)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'Tracks',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Caption('${player.tracks.length}'),
+                              const Spacer(),
+                              PillButton(
+                                key: const ValueKey('musics-add'),
+                                label: 'Add track',
+                                icon: Icons.library_add_outlined,
+                                onTap: onAddTrack,
+                              ),
+                            ],
+                          ),
+                          if (notice != null)
+                            ValueListenableBuilder<String?>(
+                              valueListenable: notice!,
+                              builder: (context, value, _) => AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 220),
+                                transitionBuilder: (child, animation) =>
+                                    FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: Tween<Offset>(
+                                      begin: const Offset(0, -0.2),
+                                      end: Offset.zero,
+                                    ).animate(animation),
+                                    child: child,
+                                  ),
+                                ),
+                                child: value == null
+                                    ? const SizedBox(
+                                        key: ValueKey('musics-no-notice'),
+                                        height: 0,
+                                      )
+                                    : Padding(
+                                        key: const ValueKey('musics-notice'),
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Caption(value),
+                                      ),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          Expanded(child: _TrackList(player: player)),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -175,11 +244,17 @@ class _PulseCoverState extends State<_PulseCover>
             Transform.scale(
               key: const ValueKey('musics-cover'),
               scale: _scale,
-              child: TrackArt(
-                cover: track?.coverIn(widget.player.covers),
-                avatar: track?.avatar,
-                size: widget.size,
-                borderRadius: BorderRadius.circular(20),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 260),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: TrackArt(
+                  key: ValueKey<String>(track?.file ?? 'none'),
+                  cover: track?.coverIn(widget.player.covers),
+                  avatar: track?.avatar,
+                  size: widget.size,
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
             ),
           ],
@@ -211,6 +286,7 @@ class _TrackList extends StatelessWidget {
             key: ValueKey('musics-track-$index'),
             index: index,
             track: track,
+            cover: track.coverIn(player.covers),
             selected: index == player.index,
             playing: index == player.index && player.isPlaying,
             onTap: () => player.select(index, autoplay: true),
@@ -224,6 +300,7 @@ class _TrackList extends StatelessWidget {
 class _TrackRow extends StatefulWidget {
   final int index;
   final Track track;
+  final Uint8List? cover;
   final bool selected;
   final bool playing;
   final VoidCallback onTap;
@@ -232,6 +309,7 @@ class _TrackRow extends StatefulWidget {
     super.key,
     required this.index,
     required this.track,
+    required this.cover,
     required this.selected,
     required this.playing,
     required this.onTap,
@@ -270,20 +348,19 @@ class _TrackRowState extends State<_TrackRow> {
           ),
           child: Row(
             children: [
-              SizedBox(
-                width: 22,
-                child: widget.playing
-                    ? const _Equalizer()
-                    : Text(
-                        '${widget.index + 1}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white30,
-                          fontSize: 10,
-                        ),
-                      ),
+              // The artwork was missing from this list entirely; the big cover
+              // on the left had it, the rows did not.
+              AnimatedScale(
+                duration: const Duration(milliseconds: 150),
+                scale: _hovered ? 1.05 : 1.0,
+                child: TrackArt(
+                  cover: widget.cover,
+                  avatar: widget.track.avatar,
+                  size: 36,
+                  borderRadius: BorderRadius.circular(9),
+                ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -312,9 +389,23 @@ class _TrackRowState extends State<_TrackRow> {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                widget.track.duration.isEmpty ? '' : widget.track.duration,
-                style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+              SizedBox(
+                width: 30,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: widget.playing
+                      ? const _Equalizer()
+                      : Text(
+                          widget.track.duration.isEmpty
+                              ? '${widget.index + 1}'
+                              : widget.track.duration,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                ),
               ),
             ],
           ),

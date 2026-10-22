@@ -520,6 +520,9 @@ class _FakeAudio implements AudioEngine {
   }
 
   @override
+  Future<void> playFile(String path) async => calls.add('playFile');
+
+  @override
   Future<void> pause() async => calls.add('pause');
 
   @override

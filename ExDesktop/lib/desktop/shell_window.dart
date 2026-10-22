@@ -76,15 +76,53 @@ class _ShellWindowState extends State<ShellWindow>
     duration: const Duration(milliseconds: 190),
   );
 
+  /// Maximize / restore glides between the two rectangles instead of snapping.
+  late final AnimationController _rectMove = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 230),
+  );
+
+  late Rect _displayedRect;
+  late Rect _fromRect;
+  late Rect _toRect;
+
   _ExitAction _exitAction = _ExitAction.none;
   bool _dragging = false;
   bool _resizing = false;
+
+  static Rect _rectOf(AppWindow window) => Rect.fromLTWH(
+        window.left,
+        window.top,
+        window.width,
+        window.height,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    final rect = _rectOf(widget.window);
+    _displayedRect = rect;
+    _fromRect = rect;
+    _toRect = rect;
+  }
 
   @override
   void dispose() {
     _entrance.dispose();
     _exit.dispose();
+    _rectMove.dispose();
     super.dispose();
+  }
+
+  /// Maximize or restore with a short glide. Called from the title bar (both
+  /// the button and the double-click), so the manager's instant rect change
+  /// is turned into an animation here.
+  void _toggleMaximized() {
+    _fromRect = _displayedRect;
+    widget.manager.toggleMaximize(widget.window.id);
+    _toRect = _rectOf(widget.window);
+    _rectMove.forward(from: 0);
+    setState(() {});
   }
 
   void _requestExit(_ExitAction action) {
@@ -105,12 +143,25 @@ class _ShellWindowState extends State<ShellWindow>
 
   @override
   Widget build(BuildContext context) {
-    final window = widget.window;
-    return Positioned(
-      left: window.left,
-      top: window.top,
-      width: window.width,
-      height: window.height,
+    return AnimatedBuilder(
+      animation: _rectMove,
+      builder: (context, child) {
+        final rect = _rectMove.isAnimating
+            ? Rect.lerp(
+                _fromRect,
+                _toRect,
+                Curves.easeOutCubic.transform(_rectMove.value),
+              )!
+            : _rectOf(widget.window);
+        _displayedRect = rect;
+        return Positioned(
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          child: child!,
+        );
+      },
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (_) {
@@ -140,7 +191,7 @@ class _ShellWindowState extends State<ShellWindow>
           child: WindowScope(
             active: widget.active,
             animating: _animating,
-            contentSize: Size(window.width, window.height - 40),
+            contentSize: Size(widget.window.width, widget.window.height - 40),
             child: _chrome(context),
           ),
         ),
@@ -186,7 +237,9 @@ class _ShellWindowState extends State<ShellWindow>
                 child: ClipRect(
                   child: Stack(
                     children: [
-                      Positioned.fill(child: widget.content),
+                      Positioned.fill(
+                        child: RepaintBoundary(child: widget.content),
+                      ),
                       if (!window.maximized) _resizeHandle(),
                     ],
                   ),
@@ -203,7 +256,10 @@ class _ShellWindowState extends State<ShellWindow>
     final window = widget.window;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (_) => setState(() => _dragging = true),
+      onPanStart: (_) {
+        _rectMove.stop();
+        setState(() => _dragging = true);
+      },
       onPanUpdate: (details) {
         widget.manager.moveBy(
           window.id,
@@ -216,10 +272,7 @@ class _ShellWindowState extends State<ShellWindow>
       },
       onPanEnd: (_) => setState(() => _dragging = false),
       onPanCancel: () => setState(() => _dragging = false),
-      onDoubleTap: () {
-        widget.manager.toggleMaximize(window.id);
-        setState(() {});
-      },
+      onDoubleTap: _toggleMaximized,
       child: MouseRegion(
         cursor: _dragging ? SystemMouseCursors.grabbing : SystemMouseCursors.move,
         child: Container(
@@ -268,10 +321,7 @@ class _ShellWindowState extends State<ShellWindow>
                     ? Icons.filter_none_rounded
                     : Icons.crop_square_rounded,
                 tooltip: window.maximized ? 'Restore' : 'Maximize',
-                onTap: () {
-                  widget.manager.toggleMaximize(window.id);
-                  setState(() {});
-                },
+                onTap: _toggleMaximized,
               ),
               _windowButton(
                 key: const ValueKey('window-close'),
@@ -314,7 +364,10 @@ class _ShellWindowState extends State<ShellWindow>
         child: GestureDetector(
           key: const ValueKey('window-resize'),
           behavior: HitTestBehavior.opaque,
-          onPanStart: (_) => setState(() => _resizing = true),
+          onPanStart: (_) {
+        _rectMove.stop();
+        setState(() => _resizing = true);
+      },
           onPanUpdate: (details) {
             widget.manager.resizeBy(
               widget.window.id,

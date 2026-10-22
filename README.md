@@ -77,6 +77,27 @@ runs and 300 ms stress frames.
 - The thumb grows on hover and **stretches like a droplet** against the drag direction
 - 🟠 Loop the current track, repeat the playlist, shuffle order
 - **Musics** (the Tracks pill) opens a full player window: the list of tracks and artists, previous / play / next, a timecode seek bar, and a cover that **breathes with the beat** instead of spinning
+- **Every row in Musics shows its cover**, not just the big artwork on the left
+- **Add track** opens the in-app Files window as a picker; it accepts mp3, wav, flac, ogg, m4a, aac, wma, opus and aiff, copies the file into `%APPDATA%\EXpaDesktop\Music` and refreshes the library. Files on disk that match are picked up on the next start too
+- Covers for the list come from the mp3 tags (or the shell's glass placeholder), and the **Rust scanner** extracts them for the whole folder in one native pass
+
+## ⚡ Smooth by construction
+
+The animations are not just pretty, they are budgeted:
+
+- **Idle sliders do not tick.** The wave slider used to run a ticker forever;
+  now it sleeps when it is not hovered, dragged or chasing a value, so a
+  settings window with four sliders costs zero frames at rest.
+- **Every animation that changes one thing rebuilds one thing.** The 12 s
+  wallpaper slideshow repaints the wallpaper, the 45 s radio refresh repaints
+  the waybar, music playback repaints the player, and dragging a window
+  repaints that window — never the other apps.
+- **Window movement is composited, not repainted**: the entrance/exit springs
+  use opacity + transform, app content sits in a `RepaintBoundary`, and
+  maximize/restore glides between rectangles over 230 ms.
+- Everything is animated: launcher tiles stagger in, settings panes crossfade,
+  the file picker's banner slides down, dock icons scale in and out, the
+  Musics cover crossfades between tracks, and the snip preview fades in.
 
 ## ☀️ Display Control
 
@@ -176,7 +197,11 @@ ExDesktop/
 │   │   ├── files_model.dart
 │   │   ├── paint_board.dart
 │   │   ├── terminal_session.dart
-│   │   └── browser_model.dart
+│   │   ├── browser_model.dart
+│   │   ├── audio_pick.dart      #  Musics → Files picker request
+│   │   ├── music_library.dart   #  the user's Music folder: import + scan
+│   │   ├── music_scanner.dart   #  the Rust scanner's FFI + JSON
+│   │   └── wav_info.dart        #  WAV duration from the header
 │   ├── ui/                      # glass controls + the waybar's mini player
 │   ├── sound_control.dart       # one owner of the master volume and mute
 │   ├── radio_control.dart       # Wi-Fi / Bluetooth state and switching
@@ -191,7 +216,9 @@ ExDesktop/
 │   ├── id3_art.dart             # title / artist / cover from the mp3 tags
 │   ├── track_art.dart           # one artwork rule: cover, asset, placeholder
 │   ├── liquid_glass/            # 🔬 physics & widgets
-│   └── rust/                    # DDC/CI + gamma ramps (Rust)
+│   └── rust/
+│       ├── src/lib.rs           #   DDC/CI + gamma ramps
+│       └── music_scan/          #   fast folder scan + ID3/covers
 ├── assets/                      # fons, music, icons
 └── test/
     ├── mock_harness.dart             # 🧪 shared check/report harness
@@ -199,6 +226,7 @@ ExDesktop/
     ├── desktop_check.dart            # 🧪 117 window manager + catalog checks
     ├── apps_check.dart               # 🧪 150 app-model checks
     ├── playback_check.dart           # 🧪 54 spin/beat/playlist checks
+    ├── library_check.dart            # 🧪 69 import/WAV/Rust-JSON checks
     ├── shell_check.dart              # 🧪 335 layout/policy/ID3/workspace checks
     ├── system_mock_check.dart        # 🧪 476 system + assistant checks
     ├── liquid_glass_mock_check.dart  # 🧪 53 physics checks
@@ -207,6 +235,8 @@ ExDesktop/
         ├── settings_view_test.dart   # 🧪 13 settings widget tests
         ├── player_controller_test.dart # 🧪 10 player tests
         ├── apps_extra_test.dart      # 🧪 4 browser/notepad tests
+        ├── music_add_test.dart       # 🧪 4 picker + Musics tests
+        ├── animations_test.dart      # 🧪 3 idle-ticker regression tests
         └── track_art_test.dart       # 🧪 4 artwork tests
 ```
 
@@ -269,7 +299,7 @@ flutter build windows --release   # -> build\windows\x64\runner\Release\exp_desk
 
 The release folder is self-contained: `exp_desktop.exe`, `flutter_windows.dll`,
 `audioplayers_windows_plugin.dll`, `flutter_inappwebview_windows_plugin.dll`,
-`WebView2Loader.dll` and `data\flutter_assets\`.
+`WebView2Loader.dll`, `music_scan.dll` (when built) and `data\flutter_assets\`.
 The Windows runner lives in `ExDesktop/windows/` (generated with
 `flutter create --platforms=windows .` and committed, so a fresh clone builds).
 
@@ -282,34 +312,45 @@ page and says so instead of breaking.
 subdirectories: C++/WinRT still includes `<experimental/coroutine>`, and MSVC
 14.51 turned that into a hard error. It is Microsoft's documented escape hatch.
 
-**Nothing binary is committed.** The DDC/CI brightness controller is a Rust
-library you build once (needs a Rust toolchain):
+**Nothing binary is committed.** There are two optional Rust libraries; both
+are built once with a Rust toolchain:
 
 ```bash
 cd ExDesktop/lib/rust
 cargo build --release
-cp target/release/brightness.dll .   # local only, gitignored
+cp target/release/brightness.dll .        # local only, gitignored
+
+cd music_scan
+cargo build --release
+cp target/release/music_scan.dll .        # local only, gitignored
 ```
 
-Without it the app still runs — the brightness sliders simply do nothing:
-`lib/main.dart` tries several paths and fails soft. `flutter build windows`
-copies the DLL next to the exe when it is there, and skips it otherwise.
+- **brightness.dll** — DDC/CI + gamma ramps. Without it the brightness sliders
+  do nothing: `lib/main.dart` tries several paths and fails soft.
+- **music_scan.dll** — walks `%APPDATA%\EXpaDesktop\Music`, reads ID3
+  title/artist/TLEN/APIC and WAV durations in one native pass and caches the
+  covers. Without it the shell falls back to the pure-Dart scanner (correct,
+  just slower on a big library).
+
+`flutter build windows` copies each DLL next to the exe when it is present and
+prints a status line when it is not.
 
 ## 🧪 Tests
 
 Widget tests run under `flutter test`; the window manager, app models, player
-math, system layer and physics suites are plain Dart scripts (no Flutter
-needed). `mock_all.dart` runs all of them and prints a single total —
-**1185 checks**, plus **54 widget tests**.
+math, library and system suites are plain Dart scripts (no Flutter needed).
+`mock_all.dart` runs all of them and prints a single total —
+**1254 checks**, plus **61 widget tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 54 widget tests
+flutter test                                 # 61 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1185 mock checks
+dart run test/mock_all.dart                  # 1254 mock checks
 dart run test/desktop_check.dart             # windows: 117 checks
 dart run test/apps_check.dart                # app models: 150 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
+dart run test/library_check.dart             # import, WAV, Rust JSON: 69 checks
 dart run test/liquid_glass_mock_check.dart   # physics only: 53 checks
 dart run test/system_mock_check.dart         # system + assistant: 476 checks
 dart run test/shell_check.dart               # layout, panels, ID3, workspaces: 335 checks

@@ -30,5 +30,7 @@ build/
 
 # Prebuilt native library: build it with cargo, do not commit it
 ExDesktop/lib/rust/*.dll
+ExDesktop/lib/rust/music_scan/*.dll
+ExDesktop/lib/rust/music_scan/target/
 ExDesktop/lib/rust/target/
 docs/screenshot.png

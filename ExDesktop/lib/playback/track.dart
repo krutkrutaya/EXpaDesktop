@@ -10,8 +10,12 @@ class Track {
   final String title;
   final String artist;
 
-  /// The bundled file name, e.g. `morgenshtern-ice.mp3`.
+  /// The bundled file name, e.g. `morgenshtern-ice.mp3` (also the unique
+  /// library key for imported files).
   final String file;
+
+  /// Absolute path for a file imported from disk; empty for a bundled asset.
+  final String path;
 
   /// The bundled cover from the track table; empty when there is none.
   final String avatar;
@@ -23,14 +27,19 @@ class Track {
     required this.title,
     required this.artist,
     required this.file,
+    this.path = '',
     this.avatar = '',
     this.duration = '',
   });
+
+  /// True for a track that lives on disk outside the app bundle.
+  bool get isFile => path.isNotEmpty;
 
   Track withDuration(String value) => Track(
         title: title,
         artist: artist,
         file: file,
+        path: path,
         avatar: avatar,
         duration: value,
       );
