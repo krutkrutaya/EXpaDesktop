@@ -2561,19 +2561,19 @@ class _MyHomePageState extends State<MyHomePage>
                 if (morph == null || f == null) return const SizedBox.shrink();
                 return MorphGlass(
                   frame: f,
-                  restWidth: 320,
-                  restHeight: 296,
+                  restWidth: 380,
+                  restHeight: 360,
                   interactive: true,
                   child: SizedBox(
-                    width: 320,
-                    height: 296,
+                    width: 380,
+                    height: 360,
                     child: Padding(
                       padding: const EdgeInsets.all(11),
                       child: Column(
                         children: [
                           SizedBox(
-                            width: 298,
-                            height: 210,
+                            width: 358,
+                            height: 266,
                             child: Wrap(
                               alignment: WrapAlignment.center,
                               runAlignment: WrapAlignment.center,
@@ -2588,6 +2588,7 @@ class _MyHomePageState extends State<MyHomePage>
                                     key: ValueKey(
                                         'launcher-app-${_launcherApps[i].id}'),
                                     icon: iconForApp(_launcherApps[i]),
+                                    accent: accentForApp(_launcherApps[i]),
                                     label: _launcherLabel(_launcherApps[i]),
                                     onTap: () => _openApp(_launcherApps[i]),
                                   ),
@@ -3039,6 +3040,13 @@ class _MyHomePageState extends State<MyHomePage>
         ShellApp.browser,
         ShellApp.musics,
         ShellApp.configs,
+        ShellApp.settings,
+        ShellApp.terminal,
+        ShellApp.clipboard,
+        ShellApp.notifications,
+        ShellApp.calendar,
+        ShellApp.emoji,
+        ShellApp.updates,
       ];
 
   /// Launcher tile labels in the shell language. Windows titles (the window
@@ -3055,6 +3063,11 @@ class _MyHomePageState extends State<MyHomePage>
         'configs' => 'Конфиги',
         'settings' => 'Настройки',
         'terminal' => 'Терминал',
+        'clipboard' => 'Буфер',
+        'notifications' => 'Уведомления',
+        'calendar' => 'Календарь',
+        'emoji' => 'Эмодзи',
+        'updates' => 'Обновления',
         _ => app.title,
       });
 
@@ -4020,6 +4033,7 @@ class _DockTasksState extends State<_DockTasks> {
                   : 'dock-app-${window.appId}',
             ),
             icon: iconForApp(window.app),
+            accent: accentForApp(window.app),
             active: widget.activeId == window.id && !window.minimized,
             minimized: window.minimized,
             leaving: _leaving.contains(window.id),
@@ -4033,6 +4047,7 @@ class _DockTasksState extends State<_DockTasks> {
 /// One running window in the dock: click to focus, click again to minimize.
 class _DockTask extends StatefulWidget {
   final IconData icon;
+  final Color accent;
   final bool active;
   final bool minimized;
   final bool leaving;
@@ -4041,6 +4056,7 @@ class _DockTask extends StatefulWidget {
   const _DockTask({
     super.key,
     required this.icon,
+    required this.accent,
     required this.active,
     required this.minimized,
     required this.leaving,
@@ -4125,9 +4141,13 @@ class _DockTaskState extends State<_DockTask>
           height: 40,
           margin: const EdgeInsets.symmetric(vertical: 1),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(
-              alpha: widget.active ? 0.20 : (_hovered ? 0.12 : 0.0),
-            ),
+            color: widget.minimized
+                ? Colors.transparent
+                : widget.active
+                    ? widget.accent.withValues(alpha: 0.18)
+                    : (_hovered
+                        ? Colors.white.withValues(alpha: 0.12)
+                        : Colors.transparent),
             borderRadius: BorderRadius.circular(11),
           ),
           child: Stack(
@@ -4137,10 +4157,10 @@ class _DockTaskState extends State<_DockTask>
                 widget.icon,
                 // Bigger running-app icons in the dock: more visible at a
                 // glance, the hit area is unchanged.
-                size: 25,
+                size: 24,
                 color: widget.minimized
                     ? Colors.white38
-                    : (widget.active ? Colors.white : Colors.white70),
+                    : (widget.active ? widget.accent : Colors.white70),
               ),
               Positioned(
                 bottom: 4,
@@ -4289,12 +4309,14 @@ class _PowerMenuItemState extends State<_PowerMenuItem> {
 /// One launcher tile: icon over a short label.
 class _LauncherTile extends StatefulWidget {
   final IconData icon;
+  final Color accent;
   final String label;
   final VoidCallback onTap;
 
   const _LauncherTile({
     super.key,
     required this.icon,
+    required this.accent,
     required this.label,
     required this.onTap,
   });
@@ -4304,30 +4326,54 @@ class _LauncherTile extends StatefulWidget {
 }
 
 class _LauncherTileState extends State<_LauncherTile> {
+  bool _hovered = false;
+
   @override
   Widget build(BuildContext context) {
-    // Hover feedback is the cursor alone. The old translucent white wash read
-    // as "the tile goes dark" over the glass, which the user asked to remove.
     return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: SizedBox(
-          width: 92,
-          height: 58,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(widget.icon, color: Colors.white, size: 23),
-              const SizedBox(height: 3),
-              Text(
-                widget.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 9.5),
-              ),
-            ],
+        child: AnimatedScale(
+          scale: _hovered ? 1.06 : 1,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          child: SizedBox(
+            width: 84,
+            height: 62,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: widget.accent.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: widget.accent.withValues(
+                          alpha: _hovered ? 0.65 : 0.30),
+                    ),
+                  ),
+                  child: Icon(widget.icon, color: widget.accent, size: 19),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  widget.label,
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _hovered ? Colors.white : Colors.white70,
+                    fontSize: 8.8,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

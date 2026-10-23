@@ -61,7 +61,10 @@ minimize and close. Nothing launches a second Windows window.
 - **Drag** by the title bar, **resize** from the corner, **double-click** the
   title to maximize/restore. Dragging repaints only that window.
 - The dock shows one icon per open window: click to focus, click the focused
-  one to minimize.
+  one to minimize. Every built-in app opened from the launcher gets its own
+  accent-tinted dock task with the same fade/scale in and the same exit fade;
+  the 16-tile launcher covers Calculator, Files, Settings, Clipboard,
+  Notifications, Calendar, Emoji, Updater and the rest.
 
 ## 🌊 Liquid Glass Animations
 
@@ -417,8 +420,8 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.2.1
-commit=cd86fd7
+version=1.3.0
+commit=8103a11
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
@@ -434,12 +437,12 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1627 checks** with the optional Rust DLLs built, plus **91 widget tests**,
+**1627 checks** with the optional Rust DLLs built, plus **94 widget tests**,
 **9 sysctl Rust tests** and **6 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 91 widget tests
+flutter test                                 # 94 widget tests
 flutter analyze                              # No issues found
 dart run test/mock_all.dart                  # 1627 mock checks
 dart run test/exwm_check.dart                # window manager + snap: 51 checks

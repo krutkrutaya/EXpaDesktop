@@ -507,6 +507,74 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a new launcher app gets a dock task and animates away',
+      (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
+    await _settle(tester);
+
+    final tile = find.byKey(const ValueKey('launcher-app-calendar'));
+    expect(tile, findsOneWidget);
+    expect(
+      find.descendant(of: tile, matching: find.byType(AnimatedScale)),
+      findsOneWidget,
+    );
+
+    await tester.tap(tile);
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('calendar-prev')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dock-app-calendar')), findsOneWidget);
+
+    // Clicking the active dock task folds the window into the dock.
+    await tester.tap(find.byKey(const ValueKey('dock-app-calendar')));
+    await _settle(tester, frames: 80);
+    expect(find.byKey(const ValueKey('calendar-prev')), findsNothing);
+
+    // Clicking it again restores the same window.
+    await tester.tap(find.byKey(const ValueKey('dock-app-calendar')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('calendar-prev')), findsOneWidget);
+
+    // Closing the window removes the dock task after its fade.
+    await tester.tap(find.descendant(
+      of: find.byKey(const ValueKey('window-1')),
+      matching: find.byKey(const ValueKey('window-close')),
+    ));
+    await _settle(tester, frames: 100);
+    expect(find.byKey(const ValueKey('dock-app-calendar')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the launcher carries all built-in apps with real tiles',
+      (tester) async {
+    await _pumpShell(tester);
+    await tester.tap(find.byKey(const ValueKey('apps-button')));
+    await _settle(tester);
+
+    for (final id in [
+      'calculator',
+      'notepad',
+      'files',
+      'paint',
+      'snip',
+      'tasks',
+      'browser',
+      'musics',
+      'configs',
+      'settings',
+      'terminal',
+      'clipboard',
+      'notifications',
+      'calendar',
+      'emoji',
+      'updates',
+    ]) {
+      expect(find.byKey(ValueKey('launcher-app-$id')), findsOneWidget,
+          reason: 'launcher tile for $id');
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the player banner blurs its artwork', (tester) async {
     await _pumpShell(tester);
     await tester.tap(find.byKey(const ValueKey('mini-player')));

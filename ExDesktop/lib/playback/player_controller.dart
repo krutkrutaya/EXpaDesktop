@@ -47,8 +47,33 @@ abstract class AudioEngine {
 }
 
 /// The real backend: `audioplayers` on the platform channel.
+///
+/// Every track gets a **fresh `AudioPlayer`**. On Windows the Media Foundation
+/// backend can keep the previous source's position when the same player object
+/// is reused, even after `stop` + `seek(0)`: the new track then started at the
+/// old timecode. A new player session cannot inherit that position, and the
+/// broadcast bridges below keep the controller subscribed to the new session.
 class AudioPlayersEngine implements AudioEngine {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer _player = AudioPlayer();
+  final StreamController<Duration> _positions =
+      StreamController<Duration>.broadcast();
+  final StreamController<Duration> _durations =
+      StreamController<Duration>.broadcast();
+  final StreamController<void> _completions =
+      StreamController<void>.broadcast();
+  final List<StreamSubscription<dynamic>> _bridges = [];
+  double _volume = 1.0;
+  Future<void> _sessionQueue = Future<void>.value();
+
+  AudioPlayersEngine() {
+    _bridge(_player);
+  }
+
+  void _bridge(AudioPlayer player) {
+    _bridges.add(player.onPositionChanged.listen(_positions.add));
+    _bridges.add(player.onDurationChanged.listen(_durations.add));
+    _bridges.add(player.onPlayerComplete.listen((_) => _completions.add(null)));
+  }
 
   @override
   Future<void> playAsset(String asset) => _start(AssetSource(asset));
@@ -56,17 +81,31 @@ class AudioPlayersEngine implements AudioEngine {
   @override
   Future<void> playFile(String path) => _start(DeviceFileSource(path));
 
-  /// Always starts at the very beginning. `play()` alone reused the previous
-  /// source's position on some Windows builds; stopping first and seeking to
-  /// zero makes a track switch deterministic (the reported bug).
-  Future<void> _start(Source source) async {
-    await _player.stop();
+  Future<void> _start(Source source) {
+    // Rapid track clicks must not interleave two native sessions.
+    final result = _sessionQueue.then((_) => _reallyStart(source));
+    _sessionQueue = result.catchError((_) {});
+    return result;
+  }
+
+  Future<void> _reallyStart(Source source) async {
+    // Detach the old session first: no late position from it may reach the
+    // controller after the new track has been selected.
+    for (final bridge in _bridges) {
+      await bridge.cancel();
+    }
+    _bridges.clear();
+    final old = _player;
+    _player = AudioPlayer();
+    _bridge(_player);
+    await old.dispose();
+    await _player.setVolume(_volume);
     await _player.play(source);
     try {
       await _player.seek(Duration.zero);
     } catch (_) {
-      // A decoder can refuse a seek before it is ready; playback still starts
-      // at zero from play().
+      // A decoder can refuse a seek before it is ready; play() still starts a
+      // fresh session at zero.
     }
   }
 
@@ -83,22 +122,34 @@ class AudioPlayersEngine implements AudioEngine {
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
-  Future<void> setVolume(double volume) => _player.setVolume(volume);
+  Future<void> setVolume(double volume) async {
+    _volume = volume;
+    await _player.setVolume(volume);
+  }
 
   @override
   Future<Duration?> position() => _player.getCurrentPosition();
 
   @override
-  Stream<Duration> get onPosition => _player.onPositionChanged;
+  Stream<Duration> get onPosition => _positions.stream;
 
   @override
-  Stream<Duration> get onDuration => _player.onDurationChanged;
+  Stream<Duration> get onDuration => _durations.stream;
 
   @override
-  Stream<void> get onComplete => _player.onPlayerComplete;
+  Stream<void> get onComplete => _completions.stream;
 
   @override
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    for (final bridge in _bridges) {
+      await bridge.cancel();
+    }
+    _bridges.clear();
+    await _player.dispose();
+    await _positions.close();
+    await _durations.close();
+    await _completions.close();
+  }
 }
 
 class PlayerController extends ChangeNotifier {
@@ -147,10 +198,11 @@ class PlayerController extends ChangeNotifier {
   /// bar while the track was only selected, not playing yet).
   double? _pendingSeek;
 
-  /// Position events that arrive right after a switch can belong to the old
-  /// track (Media Foundation delivers a final position from the previous
-  /// source). While this deadline is in the future the clock stays at 0:00.
-  DateTime? _settlePositionsUntil;
+  /// After a track switch the backend must prove it reset by reporting a
+  /// position near zero. Older Windows sessions kept counting from the app
+  /// launch and reported a large first value; until that near-zero event the
+  /// clock stays at 0:00.
+  bool _awaitingPositionReset = false;
 
   List<Track> get tracks => List<Track>.unmodifiable(_tracks);
   Map<String, Uint8List> get covers => _covers;
@@ -188,7 +240,7 @@ class PlayerController extends ChangeNotifier {
     _index = wanted;
     _isLoaded = false;
     _pendingSeek = null;
-    _settlePositionsUntil = DateTime.now().add(const Duration(milliseconds: 350));
+    _awaitingPositionReset = true;
     _duration = Duration.zero;
     _setProgress(0);
     _currentTime = '0:00';
@@ -258,6 +310,7 @@ class PlayerController extends ChangeNotifier {
       await _engine.seek(
         Duration(milliseconds: (_duration.inMilliseconds * value).round()),
       );
+      _awaitingPositionReset = false;
     } else {
       _pendingSeek = value;
     }
@@ -290,6 +343,12 @@ class PlayerController extends ChangeNotifier {
   Future<void> _playCurrent() async {
     final current = track;
     if (current == null || current.file.isEmpty) return;
+    // A loop or a completion callback can reach here without select(); the
+    // clock must snap to zero for the new session immediately, not wait for
+    // the first position event.
+    _currentTime = '0:00';
+    time.value = _currentTime;
+    _setProgress(0);
     final token = ++_fadeToken;
     await _engine.setVolume(0.0);
     if (current.isFile) {
@@ -303,7 +362,7 @@ class PlayerController extends ChangeNotifier {
     try {
       await _engine.seek(Duration.zero);
     } catch (_) {}
-    _settlePositionsUntil = DateTime.now().add(const Duration(milliseconds: 350));
+    _awaitingPositionReset = true;
     _isLoaded = true;
     unawaited(_fadeIn(token));
   }
@@ -321,13 +380,19 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _onPosition(Duration position) {
-    final settling = _settlePositionsUntil != null &&
-        DateTime.now().isBefore(_settlePositionsUntil!);
+    // A new source must start near zero. Windows can deliver the previous
+    // source's position (or a value measured from player creation) as the
+    // first event; trusting it is what made a fresh track open at e.g. 4:12
+    // after the desktop had been open for 4 minutes.
+    if (_awaitingPositionReset) {
+      if (position > const Duration(seconds: 1)) return;
+      _awaitingPositionReset = false;
+    }
     // A position past the new track's duration is a stale event from the
-    // previous source even after the settle window.
+    // previous source even after the reset gate.
     final stale = _duration > Duration.zero &&
         position > _duration + const Duration(milliseconds: 500);
-    final effective = (settling || stale) ? Duration.zero : position;
+    final effective = stale ? Duration.zero : position;
     if (_duration.inMilliseconds > 0) {
       _setProgress(
         (effective.inMilliseconds / _duration.inMilliseconds)
@@ -341,9 +406,6 @@ class PlayerController extends ChangeNotifier {
   void _onDuration(Duration duration) {
     if (duration <= Duration.zero) return;
     _duration = duration;
-    // The decoder has reported the new source: from here on, positions are
-    // trustworthy again.
-    _settlePositionsUntil = null;
     _totalDuration = formatPlaybackTime(duration);
     final current = track;
     if (current != null) {

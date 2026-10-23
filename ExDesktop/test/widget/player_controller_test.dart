@@ -67,6 +67,9 @@ void main() {
 
     engine.emitDuration(const Duration(seconds: 120));
     await tester.pump();
+    // The backend proves the reset with a near-zero position first.
+    engine.emitPosition(Duration.zero);
+    await tester.pump();
     engine.emitPosition(const Duration(seconds: 30));
     await tester.pump();
     expect(player.currentTime, '0:30');
@@ -148,6 +151,7 @@ void main() {
     expect(engine.calls.where((c) => c == 'play').length,
         greaterThan(playsBefore));
     expect(player.isPlaying, isTrue);
+    expect(player.currentTime, '0:00');
     await tester.pump(const Duration(milliseconds: 400));
   });
 
@@ -164,6 +168,7 @@ void main() {
 
     expect(player.index, 0);
     expect(player.isPlaying, isTrue);
+    expect(player.currentTime, '0:00');
     await tester.pump(const Duration(milliseconds: 400));
   });
 
@@ -208,6 +213,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     engine.emitDuration(const Duration(seconds: 120));
     await tester.pump();
+    engine.emitPosition(Duration.zero);
+    await tester.pump();
     engine.emitPosition(const Duration(seconds: 90));
     await tester.pump();
     expect(player.currentTime, '1:30');
@@ -228,6 +235,38 @@ void main() {
     engine.emitPosition(const Duration(seconds: 90));
     await tester.pump();
     expect(player.currentTime, '0:00');
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  _playerTest('a stale start-of-track position after the settle window is ignored',
+      (tester, player, engine) async {
+    player.setTracks(_tracks, const {});
+    await player.play();
+    await tester.pump(const Duration(milliseconds: 16));
+    engine.emitDuration(const Duration(seconds: 120));
+    await tester.pump();
+    engine.emitPosition(Duration.zero);
+    await tester.pump();
+    engine.emitPosition(const Duration(seconds: 30));
+    await tester.pump();
+    expect(player.currentTime, '0:30');
+
+    await player.select(1, autoplay: true);
+    // Past the 350 ms settle: a broken backend can still deliver the old
+    // player's clock (the original bug). It must not move the new track.
+    await tester.pump(const Duration(milliseconds: 500));
+    engine.emitPosition(const Duration(seconds: 90));
+    await tester.pump();
+    expect(player.currentTime, '0:00');
+    expect(player.progress.value, 0.0);
+
+    // Only a near-zero position proves the new session reset.
+    engine.emitPosition(Duration.zero);
+    await tester.pump();
+    expect(player.currentTime, '0:00');
+    engine.emitPosition(const Duration(seconds: 5));
+    await tester.pump();
+    expect(player.currentTime, '0:05');
     await tester.pump(const Duration(milliseconds: 400));
   });
 
