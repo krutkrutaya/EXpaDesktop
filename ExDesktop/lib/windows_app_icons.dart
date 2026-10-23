@@ -31,7 +31,17 @@ abstract final class WindowsAppIcons {
     final safe = entry.name
         .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
-    return '${safe}_${target.hashCode.toRadixString(16)}';
+    return '${safe}_${_stableHash(target).toRadixString(16)}';
+  }
+
+  /// FNV-1a: stable across Dart runs, unlike String.hashCode on some VMs.
+  static int _stableHash(String value) {
+    var hash = 0x811C9DC5;
+    for (final code in value.codeUnits) {
+      hash ^= code;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash;
   }
 
   static String? _existing(String key) {
