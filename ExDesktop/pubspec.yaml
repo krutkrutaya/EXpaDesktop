@@ -1,6 +1,6 @@
 name: exp_desktop
 description: EXpDesktop launcher
-version: 1.0.0
+version: 1.2.0
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -11,6 +11,7 @@ dependencies:
   audioplayers: ^6.0.0
   flutter_inappwebview: ^6.1.5
   ffi: ^2.2.0
+  archive: ^3.6.1
 
 dev_dependencies:
   flutter_test:
@@ -23,4 +24,4 @@ flutter:
     - assets/fons/
     - assets/icons/
     - assets/music/
-    - version_1.1.1.txt
+    - version_1.2.0.txt

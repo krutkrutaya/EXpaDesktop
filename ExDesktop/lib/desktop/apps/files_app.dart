@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../apps/audio_pick.dart';
+import '../../apps/file_pick.dart';
 import '../../apps/files_model.dart';
 import '../../ui/glass.dart';
 
@@ -25,6 +26,9 @@ class FilesApp extends StatefulWidget {
   /// A path the shell wants this window to open (Settings → Drives).
   final ValueNotifier<String?>? openPath;
 
+  /// A one-file picker request from another app (Configs .zip import).
+  final ValueNotifier<FilePickRequest?>? filePick;
+
   /// Lets the shell route a double-click through the desktop's file
   /// associations. Returning true means the file was handed to another app.
   final bool Function(FileEntry entry)? onOpenDefault;
@@ -35,6 +39,7 @@ class FilesApp extends StatefulWidget {
     this.lister,
     this.audioPick,
     this.openPath,
+    this.filePick,
     this.onOpenDefault,
   });
 
@@ -61,6 +66,7 @@ class _FilesAppState extends State<FilesApp> {
     unawaited(_model.open(start).then((_) => _refresh()));
     widget.audioPick?.addListener(_onPickChanged);
     widget.openPath?.addListener(_onOpenPathChanged);
+    widget.filePick?.addListener(_onFilePickChanged);
     _consumeOpenPath();
   }
 
@@ -74,6 +80,7 @@ class _FilesAppState extends State<FilesApp> {
     if (oldWidget.openPath != widget.openPath) {
       oldWidget.openPath?.removeListener(_onOpenPathChanged);
       widget.openPath?.addListener(_onOpenPathChanged);
+    widget.filePick?.addListener(_onFilePickChanged);
       _consumeOpenPath();
     }
   }
@@ -82,10 +89,16 @@ class _FilesAppState extends State<FilesApp> {
   void dispose() {
     widget.audioPick?.removeListener(_onPickChanged);
     widget.openPath?.removeListener(_onOpenPathChanged);
+    widget.filePick?.removeListener(_onFilePickChanged);
+    widget.filePick?.value?.onCancel?.call();
     super.dispose();
   }
 
   void _onPickChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onFilePickChanged() {
     if (mounted) setState(() {});
   }
 
@@ -104,6 +117,15 @@ class _FilesAppState extends State<FilesApp> {
   }
 
   AudioPickRequest? get _pickRequest => widget.audioPick?.value;
+
+  FilePickRequest? get _filePickRequest => widget.filePick?.value;
+
+  void _pickFile(FileEntry entry) {
+    final request = _filePickRequest;
+    if (request == null || !request.accepts(entry.path)) return;
+    request.onPick(entry.path);
+    if (widget.filePick?.value == request) widget.filePick?.value = null;
+  }
 
   void _pick(FileEntry entry) {
     final request = _pickRequest;
@@ -189,6 +211,11 @@ class _FilesAppState extends State<FilesApp> {
       _pick(entry);
       return;
     }
+    final fileRequest = _filePickRequest;
+    if (fileRequest != null && fileRequest.accepts(entry.path)) {
+      _pickFile(entry);
+      return;
+    }
     if (widget.onOpenDefault?.call(entry) == true) return;
     await _select(entry);
   }
@@ -240,6 +267,60 @@ class _FilesAppState extends State<FilesApp> {
                       key: const ValueKey('audio-pick-cancel'),
                       label: 'Cancel',
                       onTap: () => request.onCancel?.call(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _filePickBanner() {
+    final request = widget.filePick?.value;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => SizeTransition(
+        sizeFactor: animation,
+        child: FadeTransition(opacity: animation, child: child),
+      ),
+      child: request == null
+          ? const SizedBox(
+              key: ValueKey('no-file-pick'),
+              width: double.infinity,
+            )
+          : Padding(
+              key: const ValueKey('file-pick-banner'),
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GlassPanel(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                color: const Color(0x2AFFD39A),
+                borderColor: const Color(0x55FFD39A),
+                child: Row(
+                  children: [
+                    const Icon(Icons.folder_zip_outlined,
+                        size: 16, color: Color(0xFFFFD39A)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        request.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    PillButton(
+                      key: const ValueKey('file-pick-cancel'),
+                      label: 'Cancel',
+                      onTap: () {
+                        request.onCancel?.call();
+                        if (widget.filePick?.value == request) {
+                          widget.filePick?.value = null;
+                        }
+                      },
                     ),
                   ],
                 ),
@@ -309,6 +390,7 @@ class _FilesAppState extends State<FilesApp> {
           ),
           const SizedBox(height: 6),
           _audioPickBanner(),
+          _filePickBanner(),
           const SizedBox(height: 8),
           Expanded(
             child: Row(
@@ -332,13 +414,24 @@ class _FilesAppState extends State<FilesApp> {
                             itemCount: _model.entries.length,
                             itemBuilder: (context, index) {
                               final entry = _model.entries[index];
+                              final audioRequest = _pickRequest;
+                              final fileRequest = _filePickRequest;
+                              final audioPickable = audioRequest != null &&
+                                  audioRequest.accepts(entry.path);
+                              final filePickable = fileRequest != null &&
+                                  fileRequest.accepts(entry.path);
                               return _EntryRow(
                                 key: ValueKey('files-entry-${entry.name}'),
                                 entry: entry,
                                 selected: _selected?.path == entry.path,
-                                pickable: _pickRequest != null &&
-                                    _pickRequest!.accepts(entry.path),
-                                onPick: () => _pick(entry),
+                                pickable: audioPickable || filePickable,
+                                onPick: () {
+                                  if (audioPickable) {
+                                    _pick(entry);
+                                  } else if (filePickable) {
+                                    _pickFile(entry);
+                                  }
+                                },
                                 onTap: () => unawaited(_select(entry)),
                                 onOpen: () => unawaited(_open(entry)),
                               );

@@ -39,7 +39,7 @@ minimize and close. Nothing launches a second Windows window.
 | Browser | WebView2 composited into the window: tabs, bookmarks, address bar, back/forward, start page |
 | Musics | the player as a window: every track, transport, seek bar, beat cover |
 | Terminal | runs `cmd` lines in the window and prints the output |
-| Configs | live customization hub: appearance, snapping, the Vibe bar's panels, open windows, prefs path |
+| Configs | Presets/Edit tabs: Lua looks, .zip pack import through in-app Files, a Lua editor, and live controls |
 | Settings | every pane works in-app: pointer/keyboard, drives, associations, notifications, multitasking, lock screen |
 | Clipboard | watches the Windows clipboard, keeps a searchable history, pins and copies entries back |
 | Notifications | the in-shell notification center, with unread state and a waybar badge |
@@ -153,23 +153,41 @@ All three sliders use the same wavy WaveSlider as the player.
 ## 🎛️ Settings that actually switch things
 
 The shell's own settings window is a real app inside the shell; every control
-either changes something here or opens the Windows page that owns it.
+changes something here — no row sends you to Windows Settings.
 
 | Surface | What it does |
 |---------|--------------|
 | Sound | master slider with the small mute icon on the right, a short divider, then **every app that is making noise** with its own slider and mute |
 | Wallpaper & theme | the Appearance tile: every wallpaper for the active desktop, the **timer switch** and a seconds field, autosaved |
-| Vibe bar | the Appearance tile: add/remove waybar panels (sound, Bluetooth, Wi-Fi, brightness, clipboard, emoji, updates, calendar, notifications); the bar widens when it needs room |
+| Vibe bar | the Appearance tile: add/remove waybar panels; every panel opens its in-shell app |
 | Display & monitor | the **real** resolutions, orientations and refresh rates Windows reports, then brightness/contrast/warmth |
-| Date & time | the Windows time-zone table, an "automatic" switch (off by default) and a region dropdown; the desktop clock follows the zone |
-| Wi-Fi | its own flyout: search, four-bar signal, lock icon, password card, auto-join from the Windows profile, connected network pinned with Disconnect |
-| Updates | at the very bottom: EXpaDesktop releases and Windows Update (removed from Security) |
+| Mouse & keyboard | pointer speed, button swap, wheel lines and keyboard repeat delay/rate through `SystemParametersInfo` |
+| Accessibility | reduce motion and text scale for the whole shell |
+| Drives & cameras | logical disks (with free space and Open-in-Files) and PnP cameras |
+| Default apps | the desktop's own file associations, used by Files on double-click |
+| Notifications | the notification center history plus the toast switch |
+| Multitasking | snapping, the tile gap and window animations — the same EXWM knobs Configs edits |
+| Date & time | the Windows time-zone table, an "automatic" switch and a region dropdown; the desktop clock follows the zone |
+| Wi-Fi / Bluetooth | their own flyouts; Wi-Fi has search, signal, lock, password, auto-join and disconnect |
+| Lock screen | an optional PIN, auto-lock and an in-desktop lock overlay |
+| Updates | opens the in-shell Updater (GitHub release or main commit, changelog, rebuild/restart) |
 
 The native backend is **`sysctl.dll`** (Rust): WASAPI master volume and
-per-app sessions, the WLAN API (scan / profile XML / connect / disconnect),
-GDI monitor modes, and the DST-aware time-zone table. Radios still go through
-`Windows.Devices.Radios`, and `ms-settings:` remains the fallback for panels
-Windows owns.
+per-app sessions, the WLAN API, GDI monitor modes, the DST-aware time-zone
+table, the Windows clipboard and the `SystemParametersInfo` input settings.
+Radios go through `Windows.Devices.Radios`.
+
+## 🎨 Configs: Lua presets
+
+Configs has two tabs. **Presets** applies a Lua look to the window manager and
+desktop; **Edit** is a Lua editor with Apply / Save / Reset and the live
+sliders underneath. The built-in looks are Lua sources parsed by the same
+safe subset as imported packs. **Add preset** opens the in-app Files window,
+you pick a `.zip`, and every `.lua` file inside becomes a preset. Nothing is
+extracted to disk and nothing is executed: the parser understands comments,
+`local`, tables, strings, numbers, booleans and `return`, and rejects anything
+else with a line/column error. Imported/saved presets live in
+`%APPDATA%\EXpaDesktop\presets.json`.
 
 ### Command line
 
@@ -399,8 +417,8 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.1.1
-commit=bdb14af
+version=1.2.0
+commit=08a96e0
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
@@ -416,18 +434,19 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1567 checks** with the optional Rust DLLs built, plus **86 widget tests**,
+**1625 checks** with the optional Rust DLLs built, plus **90 widget tests**,
 **9 sysctl Rust tests** and **6 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 86 widget tests
+flutter test                                 # 90 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1567 mock checks
-dart run test/exwm_check.dart                # window manager + snap: 42 checks
-dart run test/expa_check.dart                # config, notifications, version: 103 checks
+dart run test/mock_all.dart                  # 1625 mock checks
+dart run test/exwm_check.dart                # window manager + snap: 51 checks
+dart run test/expa_check.dart                # config, notifications, version: 108 checks
+dart run test/lua_preset_check.dart          # Lua subset, built-ins, zip: 58 checks
 dart run test/desktop_check.dart             # windows: 118 checks
-dart run test/apps_check.dart                # app models: 177 checks
+dart run test/apps_check.dart                # app models: 180 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
 dart run test/library_check.dart             # import, WAV, Rust JSON: 69 checks
 dart run test/native_check.dart              # audio/Wi-Fi/display/zone parsers: 39 checks

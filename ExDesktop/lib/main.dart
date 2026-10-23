@@ -24,6 +24,7 @@ import 'apps/music_library.dart';
 import 'apps/music_scanner.dart';
 import 'audio_sessions.dart';
 import 'apps/display_math.dart';
+import 'apps/file_pick.dart';
 import 'apps/files_model.dart';
 import 'command_router.dart';
 import 'desktop/app_catalog.dart';
@@ -165,6 +166,8 @@ class _MyHomePageState extends State<MyHomePage>
   final ValueNotifier<String?> _filesOpenPath = ValueNotifier<String?>(null);
   final ValueNotifier<String?> _notepadOpenPath = ValueNotifier<String?>(null);
   final ValueNotifier<String?> _browserOpenUrl = ValueNotifier<String?>(null);
+  final ValueNotifier<FilePickRequest?> _filePick =
+      ValueNotifier<FilePickRequest?>(null);
 
   /// The in-desktop lock screen.
   bool _locked = false;
@@ -744,6 +747,7 @@ class _MyHomePageState extends State<MyHomePage>
     _filesOpenPath.dispose();
     _notepadOpenPath.dispose();
     _browserOpenUrl.dispose();
+    _filePick.dispose();
     _lockTimer?.cancel();
     _toastTimer?.cancel();
     _lockController.dispose();
@@ -1432,6 +1436,7 @@ class _MyHomePageState extends State<MyHomePage>
           audioPick: _pickRequest,
           openPath: _filesOpenPath,
           onOpenDefault: _openDefaultApp,
+          filePick: _filePick,
         );
       case ShellApp.paint:
         return const PaintApp();
@@ -1512,6 +1517,7 @@ class _MyHomePageState extends State<MyHomePage>
           version: appVersion,
           prefsPath: ShellPrefs.path,
           repoPath: UpdateRunner.findRepo(),
+          pickZip: _pickZipPreset,
         );
       case ShellApp.terminal:
         return const TerminalApp();
@@ -1658,6 +1664,25 @@ class _MyHomePageState extends State<MyHomePage>
 
   /// The Updater window's action: start the Rust helper, then close this
   /// process so the build can replace the exe. The helper relaunches it.
+  Future<String?> _pickZipPreset() {
+    _filePick.value?.onCancel?.call();
+    final completer = Completer<String?>();
+    _filePick.value = FilePickRequest(
+      title: 'Choose a .zip preset pack',
+      accepts: (path) => path.toLowerCase().endsWith('.zip'),
+      onPick: (path) {
+        if (!completer.isCompleted) completer.complete(path);
+        _filePick.value = null;
+      },
+      onCancel: () {
+        if (!completer.isCompleted) completer.complete(null);
+        _filePick.value = null;
+      },
+    );
+    _openApp(ShellApp.files);
+    return completer.future;
+  }
+
   Future<String?> _startUpdate(String mode, String target, String repo) async {
     final ok = await UpdateRunner.start(
       repo: repo,

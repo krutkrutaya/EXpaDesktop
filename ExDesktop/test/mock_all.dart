@@ -14,6 +14,7 @@ import 'expa_check.dart' as expa;
 import 'exwm_check.dart' as exwm;
 import 'library_check.dart' as musiclib;
 import 'liquid_glass_mock_check.dart' as physics;
+import 'lua_preset_check.dart' as lua;
 import 'native_check.dart' as native;
 import 'playback_check.dart' as playback;
 import 'shell_check.dart' as shell;
@@ -24,6 +25,7 @@ Future<void> main() async {
   desktop.runDesktopChecks();
   exwm.runExwmChecks();
   expa.runExpaChecks();
+  lua.runLuaPresetChecks();
   playback.runPlaybackChecks();
   await apps.runAppsChecks();
   await musiclib.runLibraryChecks();
