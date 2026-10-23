@@ -516,9 +516,14 @@ class _FilesAppState extends State<FilesApp> {
                 if (!entry.isDirectory) ...[
                   const SizedBox(height: 8),
                   PillButton(
-                    label: 'Open in Windows',
-                    icon: Icons.open_in_new,
-                    onTap: () => unawaited(_openExternally(entry.path)),
+                    key: const ValueKey('files-open-default'),
+                    label: 'Open with default app',
+                    icon: Icons.open_in_new_rounded,
+                    onTap: () {
+                      if (widget.onOpenDefault?.call(entry) != true) {
+                        unawaited(_select(entry));
+                      }
+                    },
                   ),
                 ],
               ],
@@ -594,14 +599,6 @@ class _FilesAppState extends State<FilesApp> {
     );
   }
 
-  Future<void> _openExternally(String path) async {
-    try {
-      await Process.start('cmd', ['/c', 'start', '', path],
-          mode: ProcessStartMode.detached);
-    } catch (_) {
-      // The preview already shows the content; failing to hand off is not fatal.
-    }
-  }
 }
 
 class _CrumbButton extends StatefulWidget {

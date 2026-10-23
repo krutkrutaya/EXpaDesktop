@@ -105,7 +105,12 @@ class _ConfigsAppState extends State<ConfigsApp> {
 
   void _applyPreset(LuaPreset preset) {
     _commit(preset.config);
-    setState(() => _status = 'Applied ${preset.name}');
+    setState(() {
+      // The Edit tab should show the look that is now running.
+      _lua.text = preset.source;
+      _luaError = '';
+      _status = 'Applied ${preset.name}';
+    });
   }
 
   Future<void> _addPreset() async {

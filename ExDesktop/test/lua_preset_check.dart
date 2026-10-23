@@ -208,6 +208,15 @@ return {
     final all = store.loadAll();
     check('loadAll includes the built-ins', all.length == 5);
     check('the built-ins stay built-in', all.first.builtIn);
+
+    // A corrupt saved preset is skipped, not fatal.
+    File(store.path).writeAsStringSync(jsonEncode([
+      {'source': 'return { name = '},
+      {'source': 'return { name = "Good", radius = 11 }'},
+    ]));
+    final recovered = store.loadCustom();
+    checkEquals('the bad saved preset is skipped', recovered.length, 1);
+    checkEquals('the good saved preset is kept', recovered.first.name, 'Good');
   } finally {
     dir.deleteSync(recursive: true);
   }

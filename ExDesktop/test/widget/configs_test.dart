@@ -32,6 +32,12 @@ void main() {
     expect(saved!.accentIndex, 0);
     expect(saved!.windowRadius, 18);
     expect(saved!.wallpaperDim, closeTo(0.22, 0.001));
+
+    await tester.tap(find.byKey(const ValueKey('configs-tab-edit')));
+    await tester.pump(const Duration(milliseconds: 300));
+    final editor =
+        tester.widget<TextField>(find.byKey(const ValueKey('configs-lua')));
+    expect(editor.controller!.text, contains('Midnight Glass'));
   });
 
   testWidgets('the Edit tab applies a hand-written Lua config', (tester) async {

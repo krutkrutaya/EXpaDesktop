@@ -60,9 +60,7 @@ class VersionInfo {
 
 /// The file name is part of the release process: bumping the version renames
 /// this file and updates this constant.
-const String versionAsset = 'version_1.2.0.txt';
+const String versionAsset = 'version_1.2.1.txt';
 
-/// Mirrors version_1.0.0.txt. The asset is the source of truth for the
-/// Updater window (it is loaded at runtime); this constant is the fallback
-/// and what tests compare against.
-const VersionInfo appVersion = VersionInfo(1, 2, 0, commit: '08a96e0');
+/// Mirrors the version asset. The asset is the source of truth for the\n/// Updater window (it is loaded at runtime); this constant is the fallback\n/// and what tests compare against.
+const VersionInfo appVersion = VersionInfo(1, 2, 1, commit: 'cd86fd7');

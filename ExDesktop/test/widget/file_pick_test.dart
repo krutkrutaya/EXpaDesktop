@@ -60,4 +60,42 @@ void main() {
     expect(picker.value, isNull);
     expect(find.byKey(const ValueKey('file-pick-banner')), findsNothing);
   });
+
+  testWidgets('Files routes Open with default app through the shell',
+      (tester) async {
+    String? opened;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: SizedBox(
+          width: 680,
+          height: 500,
+          child: FilesApp(
+            startPath: r'C:\notes',
+            lister: (path) async => const [
+              FileEntry(
+                name: 'note.txt',
+                path: r'C:\notes\note.txt',
+                isDirectory: false,
+                size: 8,
+              ),
+            ],
+            onOpenDefault: (entry) {
+              opened = entry.path;
+              return true;
+            },
+          ),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.byKey(const ValueKey('files-entry-note.txt')));
+    await tester.pump(const Duration(milliseconds: 450));
+    expect(find.byKey(const ValueKey('files-open-default')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('files-open-default')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(opened, r'C:\notes\note.txt');
+  });
 }

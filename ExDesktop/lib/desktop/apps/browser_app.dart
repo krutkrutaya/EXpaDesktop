@@ -70,6 +70,7 @@ class _BrowserAppState extends State<BrowserApp> {
       widget.store ?? BrowserSessionStore();
   late final BrowserTabs _tabs;
   final Map<int, BrowserHistory> _histories = {};
+  Timer? _saveTimer;
   final TextEditingController _address = TextEditingController();
   final FocusNode _addressFocus = FocusNode(debugLabel: 'browser-address');
 
@@ -106,7 +107,15 @@ class _BrowserAppState extends State<BrowserApp> {
     _consumeOpenUrl();
   }
 
-  void _saveSession() => _store.save(_tabs);
+  /// Debounced: a page load can emit several navigation events, and writing
+  /// the session JSON on each of them is wasted disk work. The dispose path
+  /// flushes the last state.
+  void _saveSession() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _store.save(_tabs);
+    });
+  }
 
   void _onOpenUrl() {
     if (mounted) _consumeOpenUrl();
@@ -121,6 +130,8 @@ class _BrowserAppState extends State<BrowserApp> {
 
   @override
   void dispose() {
+    _saveTimer?.cancel();
+    _store.save(_tabs);
     widget.openUrl?.removeListener(_onOpenUrl);
     _address.dispose();
     _addressFocus.dispose();
@@ -221,8 +232,9 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 
   Future<void> _closeTab(int id) async {
+    final before = _tabs.count;
     final changed = _tabs.close(id);
-    _histories.remove(id);
+    if (_tabs.count < before) _histories.remove(id);
     if (!mounted) return;
     if (changed) {
       _current = _tabs.active.url;

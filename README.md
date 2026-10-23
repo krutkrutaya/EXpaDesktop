@@ -417,8 +417,8 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.2.0
-commit=08a96e0
+version=1.2.1
+commit=cd86fd7
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
@@ -434,17 +434,17 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1625 checks** with the optional Rust DLLs built, plus **90 widget tests**,
+**1627 checks** with the optional Rust DLLs built, plus **91 widget tests**,
 **9 sysctl Rust tests** and **6 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 90 widget tests
+flutter test                                 # 91 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1625 mock checks
+dart run test/mock_all.dart                  # 1627 mock checks
 dart run test/exwm_check.dart                # window manager + snap: 51 checks
 dart run test/expa_check.dart                # config, notifications, version: 108 checks
-dart run test/lua_preset_check.dart          # Lua subset, built-ins, zip: 58 checks
+dart run test/lua_preset_check.dart          # Lua subset, built-ins, zip: 60 checks
 dart run test/desktop_check.dart             # windows: 118 checks
 dart run test/apps_check.dart                # app models: 180 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
