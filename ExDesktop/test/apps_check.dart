@@ -16,6 +16,7 @@ import 'package:exp_desktop/apps/display_math.dart';
 import 'package:exp_desktop/apps/task_store.dart';
 
 import 'package:exp_desktop/apps/browser_model.dart';
+import 'package:exp_desktop/apps/browser_store.dart';
 import 'package:exp_desktop/apps/calculator_engine.dart';
 import 'package:exp_desktop/apps/files_model.dart';
 import 'package:exp_desktop/apps/notepad_store.dart';
@@ -494,6 +495,20 @@ void _browser() {
   tabs.toggleBookmark('https://start.example');
   check('bookmark removed', !tabs.isBookmarked('https://start.example'));
   tabs.toggleBookmark('https://start.example');
+  final dir = Directory.systemTemp.createTempSync('expa_browser');
+  try {
+    final store = BrowserSessionStore(root: dir.path);
+    store.save(tabs);
+    final stored = store.load();
+    checkEquals('the browser store keeps the tabs', stored.count, tabs.count);
+    checkEquals('the browser store keeps the active URL',
+        stored.active.url, tabs.active.url);
+    check('the browser store keeps bookmarks',
+        stored.isBookmarked('https://start.example'));
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
+
   final session = BrowserTabs.fromJson(tabs.toJson());
   checkEquals('the session keeps its tab', session.count, 1);
   checkEquals('the session keeps the active URL', session.active.url,

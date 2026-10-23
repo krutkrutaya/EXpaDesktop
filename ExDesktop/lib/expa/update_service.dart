@@ -77,13 +77,34 @@ class UpdateService {
 
   Future<UpdateCheck> check(VersionInfo current) async {
     final base = 'https://api.github.com/repos/$repository';
-    final releaseJson = await _fetcher(Uri.parse('$base/releases/latest'));
-    final commitJson =
-        await _fetcher(Uri.parse('$base/commits/main'));
+    ReleaseInfo? release;
+    CommitInfo? commit;
+    Object? firstError;
+
+    // GitHub returns 404 for a repository without releases. That must not
+    // hide the latest commit: fetch the two independently and return what
+    // worked. Only a total failure is an error the window should show.
+    try {
+      release = parseRelease(
+        await _fetcher(Uri.parse('$base/releases/latest')),
+      );
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      commit = parseCommit(
+        await _fetcher(Uri.parse('$base/commits/main')),
+      );
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (release == null && commit == null && firstError != null) {
+      throw firstError;
+    }
     return UpdateCheck(
       current: current,
-      release: parseRelease(releaseJson),
-      commit: parseCommit(commitJson),
+      release: release,
+      commit: commit,
     );
   }
 

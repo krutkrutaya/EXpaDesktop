@@ -261,17 +261,31 @@ fn append_log(path: &Path, text: &str) {
 }
 
 fn find_version_file(repo: &Path) -> Result<PathBuf, String> {
+    let mut found = Vec::new();
     for dir in [repo.to_path_buf(), repo.join("ExDesktop")] {
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with("version_") && name.ends_with(".txt") {
-                    return Ok(entry.path());
+                    found.push(entry.path());
                 }
             }
         }
     }
-    Err("no version_x.y.z.txt in the repository".to_string())
+    found.sort();
+    found.dedup();
+    match found.len() {
+        0 => Err("no version_x.y.z.txt in the repository".to_string()),
+        1 => Ok(found.remove(0)),
+        _ => Err(format!(
+            "multiple version files found ({}); keep exactly one",
+            found
+                .iter()
+                .map(|path| path.file_name().unwrap_or_default().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 fn version_text(path: &Path) -> Result<String, String> {
@@ -377,6 +391,18 @@ mod tests {
         let file = find_version_file(&temp).unwrap();
         let version = parse_version_file(&file).unwrap();
         assert_eq!(version, (2, 3, 4));
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn multiple_version_files_are_refused() {
+        let temp = std::env::temp_dir().join("expa_updater_ambiguous");
+        let _ = fs::remove_dir_all(&temp);
+        let _ = fs::create_dir_all(&temp);
+        fs::write(temp.join("version_1.0.0.txt"), "version=1.0.0\n").unwrap();
+        fs::write(temp.join("version_1.1.0.txt"), "version=1.1.0\n").unwrap();
+        let error = find_version_file(&temp).unwrap_err();
+        assert!(error.contains("multiple version files"));
         let _ = fs::remove_dir_all(&temp);
     }
 }

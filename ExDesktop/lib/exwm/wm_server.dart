@@ -125,7 +125,9 @@ class WmServer {
   /// not notify the shell here — the wallpaper layer already repaints itself.
   void _onWorkspaces() {
     final alive = workspaces.items.map((workspace) => workspace.id).toSet();
+    final before = _managers.length;
     _managers.removeWhere((id, _) => !alive.contains(id));
+    if (_managers.length != before) _notify();
   }
 
   void dispose() {

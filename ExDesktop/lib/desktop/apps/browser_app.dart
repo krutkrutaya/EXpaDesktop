@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../../apps/browser_model.dart';
+import '../../apps/browser_store.dart';
 import '../../ui/glass.dart';
 
 /// True on a real Windows run with a WebView2 runtime, false in tests and
@@ -50,10 +51,14 @@ class BrowserApp extends StatefulWidget {
   /// A URL the shell wants this window to open (Files associations).
   final ValueNotifier<String?>? openUrl;
 
+  /// Session store; injectable for tests.
+  final BrowserSessionStore? store;
+
   const BrowserApp({
     super.key,
     this.homeUrl = 'https://duckduckgo.com',
     this.openUrl,
+    this.store,
   });
 
   @override
@@ -61,8 +66,10 @@ class BrowserApp extends StatefulWidget {
 }
 
 class _BrowserAppState extends State<BrowserApp> {
+  late final BrowserSessionStore _store =
+      widget.store ?? BrowserSessionStore();
   late final BrowserTabs _tabs;
-  final BrowserHistory _history = BrowserHistory();
+  final Map<int, BrowserHistory> _histories = {};
   final TextEditingController _address = TextEditingController();
   final FocusNode _addressFocus = FocusNode(debugLabel: 'browser-address');
 
@@ -76,16 +83,30 @@ class _BrowserAppState extends State<BrowserApp> {
 
   bool get _available => webViewAvailable;
 
+  /// Back/forward are per tab: switching tabs must not leak another page's
+  /// history into this one.
+  BrowserHistory get _history => _histories.putIfAbsent(
+        _tabs.active.id,
+        () {
+          final history = BrowserHistory();
+          final url = _tabs.active.url;
+          if (url.isNotEmpty && url != 'about:blank') history.push(url);
+          return history;
+        },
+      );
+
   @override
   void initState() {
     super.initState();
-    _tabs = BrowserTabs(home: widget.homeUrl);
+    _tabs = _store.load(home: widget.homeUrl);
     _current = _tabs.active.url;
     _history.push(_current);
     _address.text = BrowserInput.display(_current);
     widget.openUrl?.addListener(_onOpenUrl);
     _consumeOpenUrl();
   }
+
+  void _saveSession() => _store.save(_tabs);
 
   void _onOpenUrl() {
     if (mounted) _consumeOpenUrl();
@@ -100,6 +121,7 @@ class _BrowserAppState extends State<BrowserApp> {
 
   @override
   void dispose() {
+    widget.openUrl?.removeListener(_onOpenUrl);
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
@@ -117,6 +139,7 @@ class _BrowserAppState extends State<BrowserApp> {
     _current = target.uri;
     _tabs.update(url: target.uri, title: BrowserInput.display(target.uri));
     _history.push(target.uri);
+    _saveSession();
     _address.text = BrowserInput.display(target.uri);
     _addressFocus.unfocus();
     _error = null;
@@ -172,6 +195,7 @@ class _BrowserAppState extends State<BrowserApp> {
     _address.text = BrowserInput.display(url);
     if (mounted) setState(() {});
     _syncButtons();
+    _saveSession();
   }
 
   Future<void> _selectTab(int id) async {
@@ -180,6 +204,8 @@ class _BrowserAppState extends State<BrowserApp> {
     _address.text = BrowserInput.display(_current);
     _history.push(_current);
     setState(() {});
+    _syncButtons();
+    _saveSession();
     await _load(_current);
   }
 
@@ -189,24 +215,30 @@ class _BrowserAppState extends State<BrowserApp> {
     _address.text = BrowserInput.display(_current);
     _history.push(_current);
     setState(() {});
+    _syncButtons();
+    _saveSession();
     await _load(_current);
   }
 
   Future<void> _closeTab(int id) async {
     final changed = _tabs.close(id);
+    _histories.remove(id);
     if (!mounted) return;
     if (changed) {
       _current = _tabs.active.url;
       _address.text = BrowserInput.display(_current);
       setState(() {});
+      _syncButtons();
       await _load(_current);
     } else {
       setState(() {});
     }
+    _saveSession();
   }
 
   void _toggleBookmark() {
     setState(() => _tabs.toggleBookmark(_current));
+    _saveSession();
   }
 
   @override
@@ -482,6 +514,7 @@ class _BrowserAppState extends State<BrowserApp> {
                 _controller?.getTitle().then((title) {
                   if (!mounted || title == null) return;
                   _tabs.update(title: title);
+                  _saveSession();
                   setState(() {});
                 });
                 _controller?.canGoBack().then((value) {

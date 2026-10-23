@@ -39,8 +39,8 @@ Rect4 snapRect(DesktopArea area, SnapZone zone, {double gap = 5}) {
   final height = full[3];
   final right = left + width;
   final bottom = top + height;
-  final halfWidth = ((width - gap) / 2).clamp(DesktopArea.minWidth, width);
-  final halfHeight = ((height - gap) / 2).clamp(DesktopArea.minHeight, height);
+  final halfWidth = ((width - gap) / 2).clamp(0.0, width).toDouble();
+  final halfHeight = ((height - gap) / 2).clamp(0.0, height).toDouble();
   final rightHalfLeft = right - halfWidth;
   final bottomHalfTop = bottom - halfHeight;
 

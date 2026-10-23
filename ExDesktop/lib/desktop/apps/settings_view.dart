@@ -159,8 +159,9 @@ class SettingsView extends StatefulWidget {
   /// The pointer/keyboard backend; the tests inject a recorder.
   final InputSource? inputSource;
 
-  /// Test seam for the Drives pane.
+  /// Test seams for the Drives pane.
   final List<DriveEntry>? drives;
+  final List<String>? cameras;
 
   // Test seams: real values are loaded from the native backend when omitted.
   final DisplayState? displayState;
@@ -202,6 +203,7 @@ class SettingsView extends StatefulWidget {
     this.onOpenPath,
     this.inputSource,
     this.drives,
+    this.cameras,
     this.displayState,
     this.timezones,
     this.audioSessions,
@@ -237,6 +239,7 @@ class _SettingsViewState extends State<SettingsView> {
   late DeConfig _draft;
   late InputSettings _input;
   List<DriveEntry> _drives = const [];
+  List<String> _cameras = const [];
   late final TextEditingController _pinController;
 
   late final TextEditingController _periodController;
@@ -371,7 +374,10 @@ class _SettingsViewState extends State<SettingsView> {
     _input = InputSettings(widget.inputSource ?? const NativeInputSource())
       ..load();
     _drives = widget.drives ?? const [];
-    if (widget.drives == null) unawaited(_loadDrives());
+    _cameras = widget.cameras ?? const [];
+    if (widget.drives == null || widget.cameras == null) {
+      unawaited(_loadDrives());
+    }
     _pinController = TextEditingController(text: widget.config.lockPin);
     widget.notifications?.addListener(_onNotifications);
     _timezones = widget.timezones ?? const [];
@@ -726,9 +732,15 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Future<void> _loadDrives() async {
-    final drives = await loadDrives();
+    final drivesFuture = loadDrives();
+    final camerasFuture = loadCameras();
+    final drives = await drivesFuture;
+    final cameras = await camerasFuture;
     if (!mounted) return;
-    setState(() => _drives = drives);
+    setState(() {
+      _drives = drives;
+      _cameras = cameras;
+    });
   }
 
   void _onNotifications() {
@@ -1454,18 +1466,11 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         const SizedBox(height: 12),
-        if (_drives.isEmpty)
-          Caption(Loc.t(
-            'No drives were reported by the system.',
-            'Система не сообщила о дисках.',
-          ))
-        else
-          Expanded(
-            child: ListView.builder(
-              itemCount: _drives.length,
-              itemBuilder: (context, index) {
-                final drive = _drives[index];
-                return Padding(
+        Expanded(
+          child: ListView(
+            children: [
+              for (final drive in _drives)
+                Padding(
                   key: ValueKey('settings-drive-${drive.id}'),
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Row(
@@ -1507,10 +1512,48 @@ class _SettingsViewState extends State<SettingsView> {
                       ),
                     ],
                   ),
-                );
-              },
-            ),
+                ),
+              if (_cameras.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  Loc.t('Cameras', 'Камеры'),
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                for (var i = 0; i < _cameras.length; i++)
+                  Padding(
+                    key: ValueKey('settings-camera-$i'),
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.videocam_outlined,
+                            size: 16, color: Colors.white54),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            _cameras[i],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 11.5),
+                          ),
+                        ),
+                        Caption(Loc.t('ready', 'готова'), size: 9.5),
+                      ],
+                    ),
+                  ),
+              ],
+              if (_drives.isEmpty && _cameras.isEmpty)
+                Caption(Loc.t(
+                  'No drives or cameras were reported by the system.',
+                  'Система не сообщила о дисках или камерах.',
+                )),
+            ],
           ),
+        ),
       ],
     );
   }

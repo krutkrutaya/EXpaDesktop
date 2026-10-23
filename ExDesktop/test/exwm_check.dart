@@ -17,6 +17,7 @@ void runExwmChecks() {
   _manager();
   _server();
   _snap();
+  _tiny();
 }
 
 void _manager() {
@@ -77,7 +78,9 @@ void _server() {
 
   // Closing the active (second) workspace drops its manager.
   workspaces.select(1);
+  final beforeClose = notifications;
   workspaces.closeActive();
+  check('closing a workspace notifies the shell', notifications > beforeClose);
   check('closing a workspace prunes its windows',
       server.windowCount == 1 && server.managers.length == 1);
   server.dispose();
@@ -134,6 +137,40 @@ void _snap() {
       snapRect(area, SnapZone.leftHalf, gap: 12)[2],
       window.rect[2],
       0.01);
+}
+
+void _tiny() {
+  section('[exwm tiny surfaces]');
+  const area = DesktopArea(200, 200);
+  final max = area.maximizeRect;
+  check('a tiny maximize stays finite',
+      max.every((value) => value.isFinite));
+  check('a tiny maximize stays inside',
+      max[0] >= 0 && max[1] >= 0 && max[2] <= 200 && max[3] <= 200);
+
+  final manager = WindowManager(area: area);
+  final window = manager.open(ShellApp.calculator);
+  check('a tiny window does not throw',
+      window.width.isFinite && window.height.isFinite);
+  manager.moveBy(window.id, -9999, -9999);
+  check('moving beyond a tiny desktop is clamped',
+      window.left.isFinite && window.top.isFinite);
+  manager.resizeBy(window.id, 9999, 9999);
+  check('resizing beyond a tiny desktop is clamped',
+      window.width.isFinite && window.height.isFinite);
+  manager.snapTo(window.id, SnapZone.leftHalf);
+  manager.toggleMaximize(window.id);
+  manager.retarget(const DesktopArea(10, 10));
+  manager.moveBy(window.id, -9999, 9999);
+  check('a 10x10 surface survives a move',
+      window.rect.every((value) => value.isFinite));
+
+  const microArea = DesktopArea(10, 10);
+  final micro = microArea.maximizeRect;
+  check('a 10x10 maximize is not negative',
+      micro[2] >= 0 && micro[3] >= 0);
+  final half = snapRect(microArea, SnapZone.leftHalf);
+  check('a 10x10 snap is not negative', half[2] >= 0 && half[3] >= 0);
 }
 
 void main() {

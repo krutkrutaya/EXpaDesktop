@@ -177,6 +177,32 @@ void main() {
     expect(saved!.byExtension['txt'], 'paint');
   });
 
+  testWidgets('the devices pane lists drives and cameras', (tester) async {
+    String? opened;
+    await _open(
+      tester,
+      section: 'drives',
+      drives: const [
+        DriveEntry(
+          id: 'C:',
+          label: 'System',
+          totalBytes: 100000000000,
+          freeBytes: 40000000000,
+        ),
+      ],
+      cameras: const ['Integrated Camera'],
+      onOpenPath: (path) => opened = path,
+    );
+
+    expect(find.byKey(const ValueKey('settings-drive-C:')), findsOneWidget);
+    expect(find.textContaining('System'), findsOneWidget);
+    expect(find.text('Integrated Camera'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-drive-open-C:')));
+    await tester.pump();
+    expect(opened, contains('C:'));
+  });
+
   testWidgets('the pointer pane reports the speed and writes the swap',
       (tester) async {
     final source = _FakeInput(mouseSpeed: 7);
@@ -502,6 +528,7 @@ Widget _settings({
   ValueChanged<String>? onOpenPath,
   InputSource? inputSource,
   List<DriveEntry>? drives,
+  List<String>? cameras,
 }) {
   final nav = navigator ?? SettingsNavigator();
   if (navigator == null) nav.show(section);
@@ -542,6 +569,7 @@ Widget _settings({
     onOpenPath: onOpenPath,
     inputSource: inputSource,
     drives: drives,
+    cameras: cameras,
   );
 }
 
@@ -596,6 +624,7 @@ Future<void> _open(
   ValueChanged<String>? onOpenPath,
   InputSource? inputSource,
   List<DriveEntry>? drives,
+  List<String>? cameras,
   Size hostSize = const Size(960, 640),
 }) async {
   tester.view.physicalSize = const Size(1280, 800);
@@ -641,6 +670,7 @@ Future<void> _open(
       onOpenPath: onOpenPath,
       inputSource: inputSource,
       drives: drives,
+    cameras: cameras,
     ),
     hostSize,
   ));

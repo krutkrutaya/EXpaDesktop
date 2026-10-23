@@ -8,6 +8,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('a missing releases endpoint still returns the latest commit',
+      () async {
+    final service = UpdateService(fetcher: (uri) async {
+      if (uri.path.endsWith('/releases/latest')) {
+        throw Exception('404');
+      }
+      return '{"sha":"abcdef1234567","commit":{"message":"main",'
+          '"author":{"date":"2026-01-01T00:00:00Z"}}}';
+    });
+
+    final result = await service.check(const VersionInfo(1, 1, 0, commit: '1111111'));
+    expect(result.release, isNull);
+    expect(result.commit?.sha, 'abcdef1234567');
+    expect(result.commitDiffers, isTrue);
+  });
+
+  test('a total GitHub failure is surfaced', () async {
+    final service = UpdateService(fetcher: (uri) async {
+      throw Exception('offline');
+    });
+    await expectLater(
+      service.check(const VersionInfo(1, 1, 0)),
+      throwsA(isA<Exception>()),
+    );
+  });
+
   testWidgets('the Updater shows the release changelog and starts it',
       (tester) async {
     String? mode;

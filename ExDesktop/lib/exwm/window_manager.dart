@@ -10,6 +10,8 @@
 // `dart run test/desktop_check.dart` (z-order, focus, maximize, dragging,
 // resizing, clamping, per-desktop isolation) without an engine.
 
+import 'dart:math' as math;
+
 import '../desktop/app_catalog.dart';
 import 'snap.dart';
 
@@ -70,11 +72,14 @@ class DesktopArea {
   /// Where a maximized window goes: 5 px away from the waybar and the dock,
   /// and 5 px from the free screen edges (left and bottom).
   Rect4 get maximizeRect {
+    // No minimum window size here: a maximized window is the screen, even on
+    // a tiny or artificially small test surface. Clamping to minWidth first
+    // would make clamp throw when the surface is narrower than 340 px.
     final w = (width - maximizeInsetLeft - maximizeInsetRight)
-        .clamp(DesktopArea.minWidth, width)
+        .clamp(0.0, width)
         .toDouble();
     final h = (height - maximizeInsetTop - maximizeInsetBottom)
-        .clamp(DesktopArea.minHeight, height)
+        .clamp(0.0, height)
         .toDouble();
     return [maximizeInsetLeft, maximizeInsetTop, w, h];
   }
@@ -228,22 +233,26 @@ class WindowManager {
   }
 
   /// Clamps a desired size to the usable desktop.
-  List<double> _fitSize(double width, double height) => [
-        width.clamp(DesktopArea.minWidth, area.usableWidth).toDouble(),
-        height.clamp(DesktopArea.minHeight, area.usableHeight).toDouble(),
-      ];
+  List<double> _fitSize(double width, double height) {
+    final maxWidth = area.usableWidth;
+    final maxHeight = area.usableHeight;
+    return [
+      width
+          .clamp(math.min(DesktopArea.minWidth, maxWidth), maxWidth)
+          .toDouble(),
+      height
+          .clamp(math.min(DesktopArea.minHeight, maxHeight), maxHeight)
+          .toDouble(),
+    ];
+  }
 
   /// Keeps a window fully on the usable desktop.
   Rect4 _clampRect(Rect4 rect) {
     final size = _fitSize(rect[2], rect[3]);
-    final left = rect[0].clamp(
-      area.left,
-      (area.right - size[0]).clamp(area.left, area.right),
-    ).toDouble();
-    final top = rect[1].clamp(
-      area.top,
-      (area.bottom - size[1]).clamp(area.top, area.bottom),
-    ).toDouble();
+    final maxLeft = math.max(area.left, area.right - size[0]);
+    final maxTop = math.max(area.top, area.bottom - size[1]);
+    final left = rect[0].clamp(area.left, maxLeft).toDouble();
+    final top = rect[1].clamp(area.top, maxTop).toDouble();
     return [left, top, size[0], size[1]];
   }
 
@@ -408,12 +417,10 @@ class WindowManager {
     }
     const keep = 160.0;
     final minLeft = area.left - window.width + keep;
-    final maxLeft = area.right - keep;
+    final maxLeft = math.max(minLeft, area.right - keep);
+    final maxTop = math.max(area.top, area.bottom - 52);
     final left = (window.left + dx).clamp(minLeft, maxLeft).toDouble();
-    final top = (window.top + dy).clamp(
-      area.top,
-      area.bottom - 52,
-    ).toDouble();
+    final top = (window.top + dy).clamp(area.top, maxTop).toDouble();
     window.rect = [left, top, window.width, window.height];
   }
 
@@ -422,13 +429,13 @@ class WindowManager {
     final window = _byId(id);
     if (window == null) return;
     window.restoreRect = null;
-    final maxWidth = area.right - window.left;
-    final maxHeight = area.bottom - window.top;
+    final maxWidth = math.max(0.0, area.right - window.left);
+    final maxHeight = math.max(0.0, area.bottom - window.top);
     final width = (window.width + dw)
-        .clamp(DesktopArea.minWidth.clamp(0, maxWidth), maxWidth)
+        .clamp(math.min(DesktopArea.minWidth, maxWidth), maxWidth)
         .toDouble();
     final height = (window.height + dh)
-        .clamp(DesktopArea.minHeight.clamp(0, maxHeight), maxHeight)
+        .clamp(math.min(DesktopArea.minHeight, maxHeight), maxHeight)
         .toDouble();
     window.rect = [window.left, window.top, width, height];
   }

@@ -72,3 +72,41 @@ Future<List<DriveEntry>> loadDrives() async {
     return const [];
   }
 }
+
+/// Camera names from PnP. The desktop lists the hardware here; embedding a
+/// live camera stream inside the shell is a separate native pipeline.
+List<String> parseCamerasJson(String json) {
+  try {
+    final decoded = jsonDecode(json);
+    final items = decoded is List ? decoded : [decoded];
+    final cameras = <String>[];
+    for (final item in items) {
+      if (item is! Map) continue;
+      final name = '${item['FriendlyName'] ?? ''}'.trim();
+      if (name.isNotEmpty) cameras.add(name);
+    }
+    return cameras;
+  } catch (_) {
+    return const [];
+  }
+}
+
+Future<List<String>> loadCameras() async {
+  try {
+    final result = await Process.run(
+      'powershell',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-PnpDevice -Class Camera -Status OK | '
+            'Select-Object FriendlyName | ConvertTo-Json -Compress',
+      ],
+      stdoutEncoding: utf8,
+    );
+    if (result.exitCode != 0) return const [];
+    return parseCamerasJson(result.stdout as String);
+  } catch (_) {
+    return const [];
+  }
+}

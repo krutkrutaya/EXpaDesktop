@@ -271,6 +271,16 @@ void _drives() {
       drives.first.sizeText.contains('GB'));
   check('garbage is empty', parseDrivesJson('not json').isEmpty);
   check('an empty list parses', parseDrivesJson('[]').isEmpty);
+
+  final cameras = parseCamerasJson(
+      '[{"FriendlyName":"Integrated Camera"},{"FriendlyName":"  "},'
+      '{"FriendlyName":"USB Webcam"}]');
+  checkEquals('two real cameras', cameras.length, 2);
+  checkEquals('the first camera name', cameras.first, 'Integrated Camera');
+  check('a blank camera is skipped', !cameras.contains(''));
+  check('garbage cameras are empty', parseCamerasJson('no').isEmpty);
+  check('a single camera object parses',
+      parseCamerasJson('{"FriendlyName":"Solo"}').single == 'Solo');
 }
 
 void _input() {

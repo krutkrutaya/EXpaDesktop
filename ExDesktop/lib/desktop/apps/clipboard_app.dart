@@ -43,9 +43,12 @@ class _ClipboardAppState extends State<ClipboardApp> {
     _source = widget.source ?? const NativeClipboardSource();
     _store = widget.store ?? ClipboardStore();
     _history = _store.load();
-    // Read whatever is already on the clipboard once, then poll.
+    // Read whatever is already on the clipboard once (after the first frame:
+    // setState is not needed while initState is still running), then poll.
     _sequence = 0;
-    _capture();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _capture();
+    });
     _poll = Timer.periodic(widget.pollInterval, (_) => _capture());
   }
 
