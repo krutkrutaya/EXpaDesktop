@@ -421,8 +421,8 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.4.0
-commit=d9ec380
+version=1.4.1
+commit=2b9d7d9
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with

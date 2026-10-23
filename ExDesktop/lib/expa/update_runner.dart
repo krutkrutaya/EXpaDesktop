@@ -44,7 +44,7 @@ abstract final class UpdateRunner {
     return null;
   }
 
-  /// Refuses to update a dirty checkout: the Rust helper would abort after
+  /// Flutter is often not on Explorer's PATH; look in the usual places too.\n  static String _findFlutter() {\n    final root = Platform.environment['FLUTTER_ROOT'];\n    if (root != null && root.isNotEmpty) {\n      final path = 'bin'\n          'flutter.bat';\n      if (File(path).existsSync()) return path;\n    }\n    for (final path in const [\n      r'C:\\src\\flutter\\bin\\flutter.bat',\n      r'C:\\flutter\\bin\\flutter.bat',\n    ]) {\n      if (File(path).existsSync()) return path;\n    }\n    try {\n      final where = Process.runSync('where', ['flutter']);\n      if (where.exitCode == 0) {\n        final first = ''.split(RegExp(r'\\r?\\n')).first.trim();\n        if (first.isNotEmpty) return first;\n      }\n    } catch (_) {}\n    return 'flutter';\n  }\n\n  /// Refuses to update a dirty checkout: the Rust helper would abort after
   /// the desktop already closed, which looked like "the updater did nothing".
   static Future<String?> preflight(String repo) async {
     final gitDir = Directory('$repo${Platform.pathSeparator}.git');

@@ -8,6 +8,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'hidden_process.dart';
 import 'windows_apps.dart';
 
 abstract final class WindowsAppIcons {
@@ -70,12 +71,7 @@ abstract final class WindowsAppIcons {
       final output = '$_root${Platform.pathSeparator}$key.png';
       Directory(_root).createSync(recursive: true);
       final script = _script(target, output);
-      final result = await Process.run(
-        'powershell',
-        ['-NoProfile', '-NonInteractive', '-Command', script],
-        stdoutEncoding: const SystemEncoding(),
-        stderrEncoding: const SystemEncoding(),
-      );
+      final result = await runPowerShell(script);
       if (result.exitCode != 0 || !File(output).existsSync()) {
         _memory[key] = null;
         return null;
