@@ -118,6 +118,17 @@ class _FilesAppState extends State<FilesApp> {
 
   AudioPickRequest? get _pickRequest => widget.audioPick?.value;
 
+  /// During an audio pick the browser becomes a picker: folders stay
+  /// navigable, but only supported audio formats are listed.
+  List<FileEntry> get _visibleEntries {
+    final request = _pickRequest;
+    if (request == null) return _model.entries;
+    return [
+      for (final entry in _model.entries)
+        if (entry.isDirectory || request.accepts(entry.path)) entry,
+    ];
+  }
+
   FilePickRequest? get _filePickRequest => widget.filePick?.value;
 
   void _pickFile(FileEntry entry) {
@@ -411,9 +422,9 @@ class _FilesAppState extends State<FilesApp> {
                             ),
                           )
                         : ListView.builder(
-                            itemCount: _model.entries.length,
+                            itemCount: _visibleEntries.length,
                             itemBuilder: (context, index) {
-                              final entry = _model.entries[index];
+                              final entry = _visibleEntries[index];
                               final audioRequest = _pickRequest;
                               final fileRequest = _filePickRequest;
                               final audioPickable = audioRequest != null &&
@@ -447,7 +458,7 @@ class _FilesAppState extends State<FilesApp> {
           const SizedBox(height: 8),
           Row(
             children: [
-              Caption(_model.error ?? '${_model.entries.length} items'),
+              Caption(_model.error ?? '${_visibleEntries.length} items'),
               const Spacer(),
               Caption(_model.path, size: 10),
             ],

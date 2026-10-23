@@ -124,6 +124,19 @@ class MusicLibrary {
   /// Whether the library folder holds anything.
   bool get hasFolder => Directory(musicDir).existsSync();
 
+  /// Deletes a file from the library. Returns false when the file was not
+  /// there or could not be removed.
+  bool delete(String path) {
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return false;
+      file.deleteSync();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Scans [musicDir] synchronously. Used by the fallback path and by the
   /// tests; the app runs it in an isolate so the UI never blocks.
   List<LibraryTrack> scanSync() => scanMusicDirectory(musicDir);

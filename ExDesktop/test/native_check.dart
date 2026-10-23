@@ -6,6 +6,7 @@
 // ignore_for_file: avoid_print
 
 import 'package:exp_desktop/native/sysctl.dart';
+import 'package:exp_desktop/windows_apps.dart';
 
 import 'mock_harness.dart';
 
@@ -14,6 +15,18 @@ void runNativeChecks() {
   _wifi();
   _display();
   _timezones();
+  _startApps();
+}
+
+void _startApps() {
+  section('start menu filtering');
+  check('a Store AUMID is listed', WindowsApps.isListable('Microsoft!App'));
+  check('a Start shortcut is listed', WindowsApps.isListable('C:/x/app.lnk'));
+  check('a shell system folder is listed', WindowsApps.isListable('{guid}\\app'));
+  check('a raw exe is not listed', !WindowsApps.isListable('C:/junk/app.exe'));
+  check('a bare stub is not listed', !WindowsApps.isListable(''));
+  check('an exe-looking name is not listed',
+      !WindowsApps.isListable('C:/Program Files/thing.EXE'));
 }
 
 void _audio() {

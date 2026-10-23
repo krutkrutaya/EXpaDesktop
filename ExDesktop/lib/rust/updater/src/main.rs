@@ -115,16 +115,42 @@ fn parse_args() -> Option<Options> {
     })
 }
 
+fn release_archive_url(tag: &str) -> String {
+    format!(
+        "https://github.com/krutkrutaya/EXpaDesktop/archive/refs/tags/{tag}.zip"
+    )
+}
+
+fn ps_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn plan_lines(options: &Options) -> Vec<String> {
     let mut lines = vec![
         format!("cd {}", options.repo.display()),
         "git fetch --all --tags --prune".to_string(),
     ];
     match options.mode {
-        Mode::Release => lines.push(format!("git checkout tags/{}", options.target)),
+        Mode::Release => {
+            lines.push(format!(
+                "powershell Invoke-WebRequest {} -OutFile .release.zip",
+                release_archive_url(&options.target)
+            ));
+            lines.push(
+                "powershell Expand-Archive .release.zip .release-src".to_string(),
+            );
+            lines.push(
+                "robocopy .release-src/* . /MIR /XD .git build .dart_tool target"
+                    .to_string(),
+            );
+            lines.push(format!("git reset --hard tags/{}", options.target));
+        }
         Mode::Commit => {
-            lines.push("git checkout main".to_string());
-            lines.push("git pull --ff-only origin main".to_string());
+            lines.push("git fetch origin main".to_string());
+            // A hard reset applies modified and new files **and removes files
+            // the target commit deleted**; `pull` alone can leave stale files
+            // behind when the history was rewritten or the tree diverged.
+            lines.push("git reset --hard origin/main".to_string());
         }
     }
     lines.push(format!(
@@ -192,11 +218,44 @@ fn run(options: &Options) -> Result<(), String> {
     )?;
     match options.mode {
         Mode::Release => {
+            // A release is downloaded as a whole archive and mirrored into the
+            // checkout. Robocopy /MIR adds changed/new files and deletes files
+            // the release no longer has; .git/build caches stay untouched.
+            let zip = options.repo.join(".release.zip");
+            let extract = options.repo.join(".release-src");
+            let script = format!(
+                "Invoke-WebRequest -Uri {} -OutFile {}\n\
+                 if (Test-Path -LiteralPath {}) {{ Remove-Item -LiteralPath {} -Recurse -Force }}\n\
+                 Expand-Archive -LiteralPath {} -DestinationPath {} -Force\n\
+                 $root = (Get-ChildItem -LiteralPath {} -Directory | Select-Object -First 1).FullName\n\
+                 robocopy $root {} /MIR /XD .git build .dart_tool target /NFL /NDL /NJH /NJS\n\
+                 if ($LASTEXITCODE -ge 8) {{ exit 1 }}\n\
+                 Remove-Item -LiteralPath {} -Recurse -Force\n\
+                 Remove-Item -LiteralPath {} -Force\n\
+                 exit 0",
+                ps_quote(&release_archive_url(&options.target)),
+                ps_quote(&zip.to_string_lossy()),
+                ps_quote(&extract.to_string_lossy()),
+                ps_quote(&extract.to_string_lossy()),
+                ps_quote(&zip.to_string_lossy()),
+                ps_quote(&extract.to_string_lossy()),
+                ps_quote(&extract.to_string_lossy()),
+                ps_quote(&options.repo.to_string_lossy()),
+                ps_quote(&extract.to_string_lossy()),
+                ps_quote(&zip.to_string_lossy()),
+            );
+            run_command(
+                Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &script]),
+                &log_path,
+            )?;
+            // The archive installed the whole release; the reset moves HEAD to
+            // the tag so future checks compare against the release commit.
             run_command(
                 Command::new("git")
                     .arg("-C")
                     .arg(&options.repo)
-                    .args(["checkout", &format!("tags/{}", options.target)]),
+                    .args(["reset", "--hard", &format!("tags/{}", options.target)]),
                 &log_path,
             )?;
         }
@@ -205,14 +264,14 @@ fn run(options: &Options) -> Result<(), String> {
                 Command::new("git")
                     .arg("-C")
                     .arg(&options.repo)
-                    .args(["checkout", "main"]),
+                    .args(["fetch", "origin", "main"]),
                 &log_path,
             )?;
             run_command(
                 Command::new("git")
                     .arg("-C")
                     .arg(&options.repo)
-                    .args(["pull", "--ff-only", "origin", "main"]),
+                    .args(["reset", "--hard", "origin/main"]),
                 &log_path,
             )?;
         }
@@ -389,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn release_plan_checks_out_the_tag() {
+    fn release_plan_downloads_the_whole_archive() {
         let options = Options {
             repo: PathBuf::from("C:/repo"),
             mode: Mode::Release,
@@ -400,12 +459,21 @@ mod tests {
             pid: None,
         };
         let lines = plan_lines(&options);
-        assert!(lines.iter().any(|line| line.contains("git checkout tags/v1.2.0")));
-        assert!(lines.iter().any(|line| line.contains("flutter build windows --release")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Invoke-WebRequest https://github.com/")));
+        assert!(lines.iter().any(|line| line.contains("Expand-Archive")));
+        assert!(lines.iter().any(|line| line.contains("robocopy .release-src/* . /MIR")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("git reset --hard tags/v1.2.0")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("flutter build windows --release")));
     }
 
     #[test]
-    fn commit_plan_pulls_main() {
+    fn commit_plan_resets_to_origin_main() {
         let options = Options {
             repo: PathBuf::from("C:/repo"),
             mode: Mode::Commit,
@@ -416,8 +484,10 @@ mod tests {
             pid: None,
         };
         let lines = plan_lines(&options);
-        assert!(lines.iter().any(|line| line.contains("git pull --ff-only origin main")));
-        assert!(lines.iter().any(|line| line.contains("C:/flutter/bin/flutter.bat build")));
+        assert!(lines.iter().any(|line| line.contains("git reset --hard origin/main")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("C:/flutter/bin/flutter.bat build")));
     }
 
     #[test]

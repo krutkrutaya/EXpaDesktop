@@ -51,6 +51,10 @@ void main() {
     expect(find.text('Choose an audio file to add to Musics'), findsOneWidget);
     expect(find.byKey(const ValueKey('files-pick-Song.mp3')), findsOneWidget);
     expect(find.byKey(const ValueKey('files-pick-notes.txt')), findsNothing);
+    // The picker is a filter, not just a set of Use buttons: unsupported
+    // files disappear while folders stay for navigation.
+    expect(find.byKey(const ValueKey('files-entry-notes.txt')), findsNothing);
+    expect(find.byKey(const ValueKey('files-entry-Song.mp3')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('files-pick-Song.mp3')));
     await tester.pump();
@@ -124,6 +128,61 @@ void main() {
     expect(picked, [r'C:\Music\Song.mp3']);
   });
 
+  testWidgets('selecting a track stays paused until the play button',
+      (tester) async {
+    final engine = _FakeAudio();
+    final player = PlayerController(engine: engine, vsync: const TestVSync());
+    player.setTracks(const [
+      Track(title: 'One', artist: 'A', file: 'one.mp3'),
+      Track(title: 'Two', artist: 'B', file: 'two.mp3'),
+    ], const {});
+
+    await tester.pumpWidget(_host(MusicsApp(player: player)));
+    await _settle(tester);
+
+    await tester.tap(find.byKey(const ValueKey('musics-track-1')));
+    await _settle(tester);
+
+    expect(player.index, 1);
+    expect(player.isPlaying, isFalse);
+    expect(player.currentTime, '0:00');
+    expect(engine.calls, isNot(contains('play')));
+
+    await tester.tap(find.byKey(const ValueKey('musics-play')));
+    await _settle(tester);
+    expect(player.isPlaying, isTrue);
+    expect(engine.calls, contains('play'));
+
+    player.dispose();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the delete button hands the track to the shell',
+      (tester) async {
+    final engine = _FakeAudio();
+    final player = PlayerController(engine: engine, vsync: const TestVSync());
+    player.setTracks(const [
+      Track(title: 'One', artist: 'A', file: 'one.mp3'),
+    ], const {});
+    Track? deleted;
+
+    await tester.pumpWidget(_host(MusicsApp(
+      player: player,
+      onDeleteTrack: (track) => deleted = track,
+    )));
+    await _settle(tester);
+
+    await tester.tap(find.byKey(const ValueKey('musics-delete-0')));
+    await _settle(tester);
+
+    expect(deleted?.title, 'One');
+    expect(deleted?.file, 'one.mp3');
+    player.dispose();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Musics has a working Add track button and shows the notice',
       (tester) async {
     final engine = _FakeAudio();
@@ -182,20 +241,22 @@ Future<void> _settle(WidgetTester tester, {int frames = 40}) async {
 }
 
 class _FakeAudio implements AudioEngine {
-  @override
-  Future<void> playAsset(String asset) async {}
+  final List<String> calls = [];
 
   @override
-  Future<void> playFile(String path) async {}
+  Future<void> playAsset(String asset) async => calls.add('play');
 
   @override
-  Future<void> pause() async {}
+  Future<void> playFile(String path) async => calls.add('play');
 
   @override
-  Future<void> resume() async {}
+  Future<void> pause() async => calls.add('pause');
 
   @override
-  Future<void> stop() async {}
+  Future<void> resume() async => calls.add('resume');
+
+  @override
+  Future<void> stop() async => calls.add('stop');
 
   @override
   Future<void> seek(Duration position) async {}

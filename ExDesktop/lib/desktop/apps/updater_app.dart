@@ -55,6 +55,7 @@ class _UpdaterAppState extends State<UpdaterApp> {
   bool _loading = true;
   bool _updating = false;
   late VersionInfo _current;
+  bool _repoAtLatest = false;
 
   @override
   void initState() {
@@ -96,7 +97,26 @@ class _UpdaterAppState extends State<UpdaterApp> {
     try {
       final check = await _service.check(_current);
       if (!mounted) return;
+      // The version file's commit lags behind a fresh `git pull`; the live
+      // HEAD decides. A build whose HEAD already contains the latest remote
+      // commit is current even if the bundled version file still says an
+      // older commit — that was the false "update available".
+      final repo = _repo.text.trim();
+      final latest = check.commit?.sha;
+      final head = repo.isEmpty ? null : UpdateRunner.localCommit(repo);
+      final repoAtLatest = repo.isNotEmpty &&
+          latest != null &&
+          UpdateRunner.commitContains(repo, latest);
       setState(() {
+        _repoAtLatest = repoAtLatest;
+        if (head != null) {
+          _current = VersionInfo(
+            _current.major,
+            _current.minor,
+            _current.patch,
+            commit: head,
+          );
+        }
         _check = check;
         _loading = false;
       });
@@ -152,7 +172,8 @@ class _UpdaterAppState extends State<UpdaterApp> {
   }
 
   bool get _available =>
-      (_check?.hasNewerRelease ?? false) || (_check?.commitDiffers ?? false);
+      (_check?.hasNewerRelease ?? false) ||
+      ((_check?.commitDiffers ?? false) && !_repoAtLatest);
 
   @override
   Widget build(BuildContext context) {
@@ -176,8 +197,14 @@ class _UpdaterAppState extends State<UpdaterApp> {
                 ),
               ),
               const SizedBox(width: 10),
-              Caption('v${_current.version}'
-                  '${_current.commit.isEmpty ? '' : ' · ${_current.commit}'}'),
+              Flexible(
+                child: Caption(
+                  'v${_current.version}'
+                  '${_current.commit.isEmpty ? '' : ' · ${_current.commit.substring(0, _current.commit.length.clamp(0, 7))}'}',
+                  maxLines: 1,
+                ),
+              ),
+              const SizedBox(width: 8),
               const Spacer(),
               PillButton(
                 key: const ValueKey('updater-check'),
@@ -277,7 +304,7 @@ class _UpdaterAppState extends State<UpdaterApp> {
                         : () => _startUpdate(
                             'release', check.release!.tag),
                   ),
-                if (check.commitDiffers)
+                if (check.commitDiffers && !_repoAtLatest)
                   Padding(
                     padding: const EdgeInsets.only(left: 8),
                     child: PillButton(
@@ -347,7 +374,7 @@ class _UpdaterAppState extends State<UpdaterApp> {
                 Caption(
                   check.hasNewerRelease
                       ? '${check.release!.tag} · ${check.release!.name}'
-                      : (check.commitDiffers
+                      : (check.commitDiffers && !_repoAtLatest
                           ? Loc.t('Main has newer commits.',
                               'В main есть новые коммиты.')
                           : Loc.t('No newer release or main commit.',

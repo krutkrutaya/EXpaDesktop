@@ -160,7 +160,7 @@ class UpdateService {
       final decoded = jsonDecode(json);
       if (decoded is! List) return const [];
       return [
-        for (final item in decoded)
+        for (final item in decoded.take(10))
           if (item is Map)
             if (parseRelease(jsonEncode(item)) case final release?)
               release,
@@ -196,7 +196,7 @@ class UpdateService {
       final decoded = jsonDecode(json);
       if (decoded is! List) return const [];
       return [
-        for (final item in decoded)
+        for (final item in decoded.take(10))
           if (item is Map)
             if (parseCommit(jsonEncode(item)) case final commit?)
               commit,

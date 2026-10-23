@@ -64,8 +64,10 @@ minimize and close. Nothing launches a second Windows window.
   one to minimize. Settings and every other built-in app use the same
   accent-tinted dock task, in/out fade and genie; the nine-tile launcher keeps
   its original compact layout.
-- The Programs panel extracts real Start-menu icons (shortcut target or Store
-  package logo) and caches them under `%APPDATA%\EXpaDesktop\app_icons`.
+- The Programs panel lists only installed shortcuts, Store apps and system
+  shell entries — raw `.exe` Start-menu junk is filtered out. It extracts real
+  icons (shortcut target or Store package logo) and caches them under
+  `%APPDATA%\EXpaDesktop\app_icons`.
 
 ## 🌊 Liquid Glass Animations
 
@@ -421,16 +423,23 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.4.1
-commit=2b9d7d9
+version=1.4.2
+commit=b642ee3
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
 `GET /repos/krutkrutaya/EXpaDesktop/releases?per_page=10` and
 `/commits?per_page=10`; the Updater shows the last ten of each, an
 up-to-date/update-available banner, and a detail sheet per item that can open
-the commit/release in the in-shell Browser. “Update to release” passes the real
-tag (e.g. `v1.1.0`); “Update to main” pulls the latest commit. The Rust
+the commit/release in the in-shell Browser. The banner compares the live git
+HEAD when the repository is available, so a build already containing the latest
+commit says “You are up to date” even if the bundled version file still carries
+an older commit. “Update to release” passes the real
+tag (e.g. `v1.1.0`); “Update to main” pulls the latest commit. A release update
+downloads the whole GitHub source archive and mirrors it into the checkout with
+robocopy `/MIR`, so changed and new files arrive and deleted files disappear. A
+commit update uses `git fetch origin main` + `git reset --hard origin/main`,
+which applies exactly the same add/change/delete set. The Rust
 `updater.exe` double-checks the version file, refuses a downgrade or a dirty
 tree, builds and relaunches. To bump the version, rename the file and update
 `versionAsset`/`appVersion` together.
@@ -440,22 +449,22 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1627 checks** with the optional Rust DLLs built, plus **100 widget tests**,
+**1637 checks** with the optional Rust DLLs built, plus **107 widget tests**,
 **9 sysctl Rust tests** and **7 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 100 widget tests
+flutter test                                 # 107 widget tests
 flutter analyze                              # No issues found
-dart run test/mock_all.dart                  # 1627 mock checks
+dart run test/mock_all.dart                  # 1637 mock checks
 dart run test/exwm_check.dart                # window manager + snap: 51 checks
 dart run test/expa_check.dart                # config, notifications, version: 108 checks
 dart run test/lua_preset_check.dart          # Lua subset, built-ins, zip: 60 checks
 dart run test/desktop_check.dart             # windows: 118 checks
 dart run test/apps_check.dart                # app models: 180 checks
 dart run test/playback_check.dart            # spin/beat/playlist: 54 checks
-dart run test/library_check.dart             # import, WAV, Rust JSON: 69 checks
-dart run test/native_check.dart              # audio/Wi-Fi/display/zone parsers: 39 checks
+dart run test/library_check.dart             # import, delete, WAV, Rust JSON: 72 checks
+dart run test/native_check.dart              # audio/Wi-Fi/display/zone/Start-menu: 45 checks
 dart run test/liquid_glass_mock_check.dart   # physics only: 53 checks
 dart run test/system_mock_check.dart         # system + assistant: 476 checks
 dart run test/shell_check.dart               # layout, waybar, panels, ID3: 414 checks

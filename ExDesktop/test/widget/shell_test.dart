@@ -16,6 +16,7 @@ import 'package:exp_desktop/radio_control.dart';
 import 'package:exp_desktop/shell_prefs.dart';
 import 'package:exp_desktop/sound_control.dart';
 import 'package:exp_desktop/wifi_control.dart';
+import 'package:exp_desktop/windows_apps.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -460,6 +461,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the programs panel shows real-looking rows, not exe junk',
+      (tester) async {
+    await _pumpShell(
+      tester,
+      windowsApps: const [
+        WindowsAppEntry(name: 'Real App', launchTarget: 'C:/apps/real.lnk'),
+        WindowsAppEntry(name: 'Junk', launchTarget: 'C:/junk/junk.exe'),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('topbar-programs')));
+    await _settle(tester);
+
+    expect(find.text('Real App'), findsOneWidget);
+    expect(find.text('Junk'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('windows-app-Real App')),
+        matching: find.text('R'),
+      ),
+      findsOneWidget,
+    );
+    // The old fallback was the generic 9-square icon; the tile now uses a
+    // colored letter while the real icon is loading or unavailable.
+    expect(find.byIcon(Icons.apps_rounded), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the wifi waybar button opens its own network flyout',
       (tester) async {
     await _pumpShell(tester);
@@ -675,6 +704,7 @@ Future<void> _pumpShell(
   Size size = const Size(1600, 900),
   AudioEngine? audio,
   List<WifiNetwork>? wifiNetworks,
+  List<WindowsAppEntry>? windowsApps,
 }) async {
   // Hermetic prefs: the waybar list, slideshow and display choices of the
   // machine running the tests must never leak into a shell test.
@@ -697,6 +727,7 @@ Future<void> _pumpShell(
       sound: _FakeSound(),
       audio: audio ?? _FakeAudio(),
       wifiNetworks: wifiNetworks,
+      windowsApps: windowsApps,
     ),
   ));
   await _settle(tester);

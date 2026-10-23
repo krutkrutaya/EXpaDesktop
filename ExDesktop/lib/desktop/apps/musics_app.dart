@@ -26,6 +26,9 @@ class MusicsApp extends StatelessWidget {
   /// Opens the in-app file picker to add a track to the library.
   final VoidCallback? onAddTrack;
 
+  /// Deletes a track from the library. The shell owns the file removal.
+  final void Function(Track track)? onDeleteTrack;
+
   /// A short "Added: …" line that fades away on its own.
   final ValueListenable<String?>? notice;
 
@@ -33,6 +36,7 @@ class MusicsApp extends StatelessWidget {
     super.key,
     required this.player,
     this.onAddTrack,
+    this.onDeleteTrack,
     this.notice,
   });
 
@@ -169,7 +173,7 @@ class MusicsApp extends StatelessWidget {
                               ),
                             ),
                           const SizedBox(height: 8),
-                          Expanded(child: _TrackList(player: player)),
+                          Expanded(child: _TrackList(player: player, onDeleteTrack: onDeleteTrack)),
                         ],
                       ),
                     ),
@@ -293,8 +297,9 @@ class _PulseCoverState extends State<_PulseCover>
 
 class _TrackList extends StatelessWidget {
   final PlayerController player;
+  final void Function(Track track)? onDeleteTrack;
 
-  const _TrackList({required this.player});
+  const _TrackList({required this.player, this.onDeleteTrack});
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +321,10 @@ class _TrackList extends StatelessWidget {
             cover: track.coverIn(player.covers),
             selected: index == player.index,
             playing: index == player.index && player.isPlaying,
-            onTap: () => player.select(index, autoplay: true),
+            onTap: () => player.select(index, autoplay: false),
+            onDelete: onDeleteTrack == null
+                ? null
+                : () => onDeleteTrack!(track),
           );
         },
       ),
@@ -331,6 +339,7 @@ class _TrackRow extends StatefulWidget {
   final bool selected;
   final bool playing;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
   const _TrackRow({
     super.key,
@@ -340,6 +349,7 @@ class _TrackRow extends StatefulWidget {
     required this.selected,
     required this.playing,
     required this.onTap,
+    this.onDelete,
   });
 
   @override
@@ -416,6 +426,17 @@ class _TrackRowState extends State<_TrackRow> {
                 ),
               ),
               const SizedBox(width: 8),
+              if (widget.onDelete != null)
+                GestureDetector(
+                  key: ValueKey('musics-delete-${widget.index}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onDelete,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.delete_outline_rounded,
+                        size: 15, color: Colors.white30),
+                  ),
+                ),
               // Duration column. A fixed 30 px box overflowed on wide
               // duration strings like "0:00:00"; the Flexible + FittedBox
               // pair scales the text down instead of spilling past the edge.

@@ -6,8 +6,9 @@
 // is centralised here. The list is scanned once at startup; the panel then
 // only filters it by the search text.
 
-import 'dart:convert';
 import 'dart:io';
+
+import 'hidden_process.dart';
 
 /// One installed Windows app: its Start-menu name and how to launch it.
 class WindowsAppEntry {
@@ -78,11 +79,16 @@ abstract final class WindowsApps {
   /// come as a `{guid}\path\program.exe` shell folder path. All three open
   /// through `shell:appsFolder`, so everything else (empty stubs like the
   /// bare system rows) is skipped.
-  static bool _isLaunchable(String launchId) =>
-      launchId.contains('!') ||
-      launchId.toLowerCase().endsWith('.lnk') ||
-      launchId.contains('{') ||
-      launchId.toLowerCase().contains('.exe');
+  /// Whether a Start-menu entry belongs in the Programs panel. Raw `.exe`
+/// AppIDs are the junk the user complained about: they are not real Start
+/// shortcuts, they can number in the hundreds and they make the panel lag.
+/// Real entries are Store AUMIDs (`...!App`), Start-menu shortcuts (`.lnk`)
+/// and shell-folder system entries (`{guid}\...`).
+static bool isListable(String launchId) {
+  final id = launchId.toLowerCase();
+  if (id.endsWith('.exe')) return false;
+  return id.contains('!') || id.endsWith('.lnk') || id.contains('{');
+}
 
   /// Reads the Start menu. Returns the apps sorted by name so the search
   /// results look stable, and skips unlaunchable stubs entirely.
@@ -90,16 +96,8 @@ abstract final class WindowsApps {
     if (_busy) return const [];
     _busy = true;
     try {
-      final result = await Process.run(
-        'powershell.exe',
-        const [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          // `\$` keeps the Dart interpolation away from PowerShell's $_.
-          'Get-StartApps | ForEach-Object { "{0}|{1}" -f \$_.AppID, \$_.Name }',
-        ],
-        stdoutEncoding: utf8,
+      final result = await runPowerShell(
+        'Get-StartApps | ForEach-Object { "{0}|{1}" -f \$_.AppID, \$_.Name }',
       );
       if (result.exitCode != 0) {
         throw 'Get-StartApps failed with code ${result.exitCode}';
@@ -112,7 +110,7 @@ abstract final class WindowsApps {
         if (cut <= 0) continue;
         final launchId = raw.substring(0, cut).trim();
         var name = raw.substring(cut + 1).trim();
-        if (!_isLaunchable(launchId)) continue;
+        if (!isListable(launchId)) continue;
         if (name.isEmpty) name = launchId;
         found.add(WindowsAppEntry(name: name, launchTarget: launchId));
       }

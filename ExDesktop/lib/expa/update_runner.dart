@@ -44,6 +44,44 @@ abstract final class UpdateRunner {
     return null;
   }
 
+  /// The commit the checkout actually has. The version file goes stale between
+  /// builds, so the Updater compares live HEAD whenever the repo is available.
+  static String? localCommit(String repo) {
+    try {
+      final result = Process.runSync(
+        'git',
+        ['-C', repo, 'rev-parse', 'HEAD'],
+        stdoutEncoding: const SystemEncoding(),
+      );
+      if (result.exitCode != 0) return null;
+      final sha = '${result.stdout}'.trim();
+      return sha.isEmpty ? null : sha;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// True when [latest] is HEAD or an ancestor of HEAD (local is current or
+  /// ahead). This is what stops the Updater from claiming "update available"
+  /// on a build that is already at the latest commit.
+  static bool commitContains(String repo, String latest) {
+    if (latest.isEmpty) return false;
+    final head = localCommit(repo);
+    if (head == null) return false;
+    if (head == latest || head.startsWith(latest) || latest.startsWith(head)) {
+      return true;
+    }
+    try {
+      final result = Process.runSync(
+        'git',
+        ['-C', repo, 'merge-base', '--is-ancestor', latest, 'HEAD'],
+      );
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Flutter is often not on Explorer's PATH; look in the usual places too.\n  static String _findFlutter() {\n    final root = Platform.environment['FLUTTER_ROOT'];\n    if (root != null && root.isNotEmpty) {\n      final path = 'bin'\n          'flutter.bat';\n      if (File(path).existsSync()) return path;\n    }\n    for (final path in const [\n      r'C:\\src\\flutter\\bin\\flutter.bat',\n      r'C:\\flutter\\bin\\flutter.bat',\n    ]) {\n      if (File(path).existsSync()) return path;\n    }\n    try {\n      final where = Process.runSync('where', ['flutter']);\n      if (where.exitCode == 0) {\n        final first = ''.split(RegExp(r'\\r?\\n')).first.trim();\n        if (first.isNotEmpty) return first;\n      }\n    } catch (_) {}\n    return 'flutter';\n  }\n\n  /// Refuses to update a dirty checkout: the Rust helper would abort after
   /// the desktop already closed, which looked like "the updater did nothing".
   static Future<String?> preflight(String repo) async {

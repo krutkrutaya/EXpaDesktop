@@ -116,6 +116,7 @@ class MyHomePage extends StatefulWidget {
     this.sound,
     this.audio,
     this.wifiNetworks,
+    this.windowsApps,
   });
 
   /// Test seams: the widget tests pass recorders so no test spawns
@@ -127,6 +128,10 @@ class MyHomePage extends StatefulWidget {
   /// Test seam: a fixed network list so the flyout can be driven without
   /// WLAN hardware or a running wlansvc.
   final List<WifiNetwork>? wifiNetworks;
+
+  /// Test seam: a fixed Start-menu list so the Programs panel can be checked
+  /// without spawning PowerShell.
+  final List<WindowsAppEntry>? windowsApps;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -462,9 +467,13 @@ class _MyHomePageState extends State<MyHomePage>
     }
     unawaited(_scanMusicAssets());
     unawaited(_loadFileLibrary());
-    // The Start-menu is read in the background: the power shell call takes a
-    // second or two and must never block the shell's first frame.
-    unawaited(_scanWindowsApps());
+    if (widget.windowsApps != null) {
+      _windowsApps = widget.windowsApps!;
+    } else {
+      // The Start-menu is read in the background: the power shell call takes a
+      // second or two and must never block the shell's first frame.
+      unawaited(_scanWindowsApps());
+    }
     // Rebuild the whole shell when the language flips in settings/configs.
     Loc.notifier.addListener(_onLanguageChanged);
   }
@@ -1418,6 +1427,31 @@ class _MyHomePageState extends State<MyHomePage>
     _notify('Track added', keyed.title, category: 'music');
   }
 
+  /// Deletes an imported track from disk and from the player. Bundled asset
+  /// tracks are part of the app and cannot be removed from the library.
+  Future<void> _deleteTrack(Track track) async {
+    if (!track.isFile) {
+      _showMusicNotice('Bundled tracks cannot be deleted');
+      return;
+    }
+    final removed = _library.delete(track.path);
+    if (!mounted) return;
+    if (!removed) {
+      _showMusicNotice('That file is already gone');
+      return;
+    }
+    setState(() {
+      _fileTracks = [
+        for (final item in _fileTracks)
+          if (item.file != track.file) item,
+      ];
+      _fileCovers = {..._fileCovers}..remove(track.file);
+    });
+    _publishTracks();
+    _showMusicNotice('Deleted: ');
+    _notify('Track deleted', track.title, category: 'music');
+  }
+
   void _showMusicNotice(String text) {
     _musicNotice.value = text;
     _noticeTimer?.cancel();
@@ -1451,6 +1485,7 @@ class _MyHomePageState extends State<MyHomePage>
         return MusicsApp(
           player: _player,
           onAddTrack: _requestAddTrack,
+          onDeleteTrack: _deleteTrack,
           notice: _musicNotice,
         );
       case ShellApp.settings:
@@ -4580,7 +4615,9 @@ class _AppsPanelState extends State<_AppsPanel> {
   Widget build(BuildContext context) {
     final query = widget.search.text.trim().toLowerCase();
     final rows = widget.windowsApps
-        .where((a) => a.name.toLowerCase().contains(query))
+        .where((a) =>
+            a.name.toLowerCase().contains(query) && WindowsApps.isListable(
+                a.launchTarget ?? ''))
         .toList();
     return Padding(
       key: const ValueKey('apps-panel'),
@@ -4710,11 +4747,31 @@ class _AppsRowState extends State<_AppsRow> {
     }));
   }
 
-  IconData get _icon => switch (widget.entry.description) {
-        'browser' => Icons.public_rounded,
-        'game' => Icons.sports_esports_rounded,
-        _ => Icons.apps_rounded,
-      };
+  /// A real icon extraction can fail for shell-folder entries; the fallback is
+  /// a colored app tile with the first letter, never the generic 9-square.
+  Widget _fallbackTile() {
+    final letter = widget.entry.name.trim().isEmpty
+        ? '?'
+        : widget.entry.name.trim().substring(0, 1).toUpperCase();
+    final hue = widget.entry.name.hashCode.toDouble();
+    final color = HSVColor.fromAHSV(0.55, hue % 360, 0.55, 1).toColor();
+    return Container(
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+      ),
+      child: Text(
+        letter,
+        style: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
 
   String get _subtitle => Loc.t(switch (widget.entry.description) {
         'browser' => 'Browser',
@@ -4752,16 +4809,13 @@ class _AppsRowState extends State<_AppsRow> {
                   color: Colors.white.withValues(alpha: 0.09),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: _image == null
-                    ? Icon(_icon, color: Colors.white70, size: 17)
-                    : Image.memory(
+                child: _image == null ? _fallbackTile() : Image.memory(
                         _image!,
                         width: 24,
                         height: 24,
                         fit: BoxFit.contain,
                         gaplessPlayback: true,
-                        errorBuilder: (context, error, stack) =>
-                            Icon(_icon, color: Colors.white70, size: 17),
+                        errorBuilder: (context, error, stack) => _fallbackTile(),
                       ),
               ),
               const SizedBox(width: 11),

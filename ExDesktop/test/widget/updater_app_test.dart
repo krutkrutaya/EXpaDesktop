@@ -1,6 +1,7 @@
 // The Updater window and its GitHub service, tested with a fake fetcher and
 // fake updater. No network, no git push, no rebuild.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:exp_desktop/desktop/apps/updater_app.dart';
@@ -49,6 +50,94 @@ void main() {
       service.check(const VersionInfo(1, 1, 0)),
       throwsA(isA<Exception>()),
     );
+  });
+
+  test('preflight passes a clean checkout and HEAD recognizes ancestors',
+      () async {
+    final repo = _gitRepo();
+    addTearDown(() => repo.deleteSync(recursive: true));
+    expect(await UpdateRunner.preflight(repo.path), isNull);
+
+    File('${repo.path}${Platform.pathSeparator}second.txt')
+        .writeAsStringSync('two');
+    void git(List<String> args) =>
+        Process.runSync('git', args, workingDirectory: repo.path);
+    git(['config', 'user.email', 'test@example.com']);
+    git(['config', 'user.name', 'Test']);
+    git(['add', '.']);
+    git(['commit', '-m', 'second']);
+    final old = UpdateRunner.localCommit(repo.path);
+    expect(UpdateRunner.commitContains(repo.path, old!), isTrue);
+  });
+
+  test('the updater reads the live HEAD and recognizes it as current', () {
+    final repo = _gitRepo();
+    addTearDown(() => repo.deleteSync(recursive: true));
+    final head = UpdateRunner.localCommit(repo.path);
+    expect(head, isNotNull);
+    expect(UpdateRunner.commitContains(repo.path, head!), isTrue);
+    expect(UpdateRunner.commitContains(repo.path, 'not-a-commit'), isFalse);
+  });
+
+  test('release and commit lists cap the history at ten rows', () {
+    final releases = List.generate(
+      12,
+      (i) => {
+        'tag_name': 'v1.$i.0',
+        'name': 'Release $i',
+        'body': 'body',
+        'published_at': '2026-01-01T00:00:00Z',
+        'html_url': 'https://github.com/x/y/releases/v1.$i.0',
+      },
+    );
+    final commits = List.generate(
+      12,
+      (i) => {
+        'sha': 'abcdef12345$i',
+        'html_url': 'https://github.com/x/y/commit/$i',
+        'commit': {
+          'message': 'commit $i',
+          'author': {'date': '2026-01-01T00:00:00Z'},
+        },
+      },
+    );
+    final releaseRows = UpdateService.parseReleaseList(jsonEncode(releases));
+    final commitRows = UpdateService.parseCommitList(jsonEncode(commits));
+    expect(releaseRows.length, 10);
+    expect(commitRows.length, 10);
+    expect(releaseRows.first.tag, 'v1.0.0');
+    expect(commitRows.first.shortSha, 'abcdef1');
+  });
+
+  testWidgets('a checkout already at the latest commit is up to date',
+      (tester) async {
+    final repo = _gitRepo();
+    addTearDown(() => repo.deleteSync(recursive: true));
+    final head = UpdateRunner.localCommit(repo.path)!;
+    final service = _FakeUpdateService(UpdateCheck(
+      current: const VersionInfo(1, 4, 1, commit: 'stale1234'),
+      commit: CommitInfo(
+        sha: head,
+        message: 'latest',
+        date: '2026-01-01T00:00:00Z',
+      ),
+    ));
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: SizedBox(
+          width: 700,
+          height: 640,
+          child: UpdaterApp(service: service, repoPath: repo.path),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('You are up to date'), findsOneWidget);
+    expect(find.byKey(const ValueKey('updater-update-commit')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the Updater shows the release changelog and starts it',
@@ -196,6 +285,25 @@ void main() {
     expect(find.byKey(const ValueKey('updater-update-release')), findsNothing);
     expect(find.byKey(const ValueKey('updater-update-commit')), findsNothing);
   });
+}
+
+Directory _gitRepo() {
+  final dir = Directory.systemTemp.createTempSync('expa_update_repo');
+  File('${dir.path}${Platform.pathSeparator}file.txt')
+      .writeAsStringSync('one');
+  void git(List<String> args) {
+    final result = Process.runSync('git', args, workingDirectory: dir.path);
+    if (result.exitCode != 0) {
+      throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+    }
+  }
+
+  git(['init']);
+  git(['config', 'user.email', 'test@example.com']);
+  git(['config', 'user.name', 'Test']);
+  git(['add', '.']);
+  git(['commit', '-m', 'test commit']);
+  return dir;
 }
 
 class _FakeUpdateService extends UpdateService {

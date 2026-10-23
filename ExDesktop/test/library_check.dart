@@ -115,6 +115,12 @@ Future<void> _importAndScan() async {
   check('both files exist',
       first != null && second != null && File(first).existsSync() && File(second).existsSync());
 
+  check('a missing file is not deleted twice',
+      !library.delete('${temp.path}${Platform.pathSeparator}nope.mp3'));
+  check('the first imported file is deleted', library.delete(first!));
+  check('the file is gone after delete', !File(first).existsSync());
+  check('the second file survives', File(second!).existsSync());
+
   final text = File('${temp.path}${Platform.pathSeparator}notes.txt');
   await text.writeAsString('hello');
   check('a text file is not imported', await library.import(text.path) == null);
@@ -131,7 +137,7 @@ Future<void> _importAndScan() async {
       .writeAsBytes(_wav(byteRate: 88200, dataSize: 44100));
 
   final scanned = scanMusicDirectory(library.musicDir);
-  check('every audio file is found', scanned.length >= 4);
+  check('every audio file is found', scanned.length >= 3);
   final taggedTrack = scanned.firstWhere((t) => t.track.file == 'Tagged.mp3');
   checkEquals('the ID3 title wins', taggedTrack.track.title, 'Real Title');
   checkEquals('the ID3 artist wins', taggedTrack.track.artist, 'Real Artist');
