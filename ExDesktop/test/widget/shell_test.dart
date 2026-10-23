@@ -507,33 +507,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a new launcher app gets a dock task and animates away',
+  testWidgets('a launcher app gets a dock task and animates away',
       (tester) async {
     await _pumpShell(tester);
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
 
-    final tile = find.byKey(const ValueKey('launcher-app-calendar'));
+    final tile = find.byKey(const ValueKey('launcher-app-configs'));
     expect(tile, findsOneWidget);
-    expect(
-      find.descendant(of: tile, matching: find.byType(AnimatedScale)),
-      findsOneWidget,
-    );
 
     await tester.tap(tile);
     await _settle(tester);
-    expect(find.byKey(const ValueKey('calendar-prev')), findsOneWidget);
-    expect(find.byKey(const ValueKey('dock-app-calendar')), findsOneWidget);
+    expect(find.byKey(const ValueKey('configs-tab-presets')), findsOneWidget);
+    expect(find.byKey(const ValueKey('dock-app-configs')), findsOneWidget);
 
     // Clicking the active dock task folds the window into the dock.
-    await tester.tap(find.byKey(const ValueKey('dock-app-calendar')));
+    await tester.tap(find.byKey(const ValueKey('dock-app-configs')));
     await _settle(tester, frames: 80);
-    expect(find.byKey(const ValueKey('calendar-prev')), findsNothing);
+    expect(find.byKey(const ValueKey('configs-tab-presets')), findsNothing);
 
     // Clicking it again restores the same window.
-    await tester.tap(find.byKey(const ValueKey('dock-app-calendar')));
+    await tester.tap(find.byKey(const ValueKey('dock-app-configs')));
     await _settle(tester);
-    expect(find.byKey(const ValueKey('calendar-prev')), findsOneWidget);
+    expect(find.byKey(const ValueKey('configs-tab-presets')), findsOneWidget);
 
     // Closing the window removes the dock task after its fade.
     await tester.tap(find.descendant(
@@ -541,12 +537,11 @@ void main() {
       matching: find.byKey(const ValueKey('window-close')),
     ));
     await _settle(tester, frames: 100);
-    expect(find.byKey(const ValueKey('dock-app-calendar')), findsNothing);
+    expect(find.byKey(const ValueKey('dock-app-configs')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the launcher carries all built-in apps with real tiles',
-      (tester) async {
+  testWidgets('the launcher keeps the original nine apps', (tester) async {
     await _pumpShell(tester);
     await tester.tap(find.byKey(const ValueKey('apps-button')));
     await _settle(tester);
@@ -561,17 +556,11 @@ void main() {
       'browser',
       'musics',
       'configs',
-      'settings',
-      'terminal',
-      'clipboard',
-      'notifications',
-      'calendar',
-      'emoji',
-      'updates',
     ]) {
       expect(find.byKey(ValueKey('launcher-app-$id')), findsOneWidget,
           reason: 'launcher tile for $id');
     }
+    expect(find.byKey(const ValueKey('launcher-app-calendar')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

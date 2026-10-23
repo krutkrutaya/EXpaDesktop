@@ -1,33 +1,50 @@
-// The Updater window: the GitHub check is a fake, so the changelog and the
-// release/commit actions are tested without the network or a rebuild.
+// The Updater window and its GitHub service, tested with a fake fetcher and
+// fake updater. No network, no git push, no rebuild.
+
+import 'dart:io';
 
 import 'package:exp_desktop/desktop/apps/updater_app.dart';
+import 'package:exp_desktop/expa/update_runner.dart';
 import 'package:exp_desktop/expa/update_service.dart';
 import 'package:exp_desktop/expa/version.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('a missing releases endpoint still returns the latest commit',
+  test('the updater refuses a dirty git checkout before closing the app',
       () async {
+    final dir = Directory.systemTemp.createTempSync('expa_dirty_repo');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    await Process.run('git', ['init', dir.path]);
+    File('${dir.path}${Platform.pathSeparator}dirty.txt')
+        .writeAsStringSync('uncommitted');
+
+    final problem = await UpdateRunner.preflight(dir.path);
+    expect(problem, contains('uncommitted changes'));
+  });
+
+  test('a missing releases endpoint still returns the latest commit', () async {
     final service = UpdateService(fetcher: (uri) async {
-      if (uri.path.endsWith('/releases/latest')) {
-        throw Exception('404');
-      }
-      return '{"sha":"abcdef1234567","commit":{"message":"main",'
-          '"author":{"date":"2026-01-01T00:00:00Z"}}}';
+      if (uri.path.contains('/releases')) throw Exception('404');
+      return '[{"sha":"abcdef1234567",'
+          '"html_url":"https://github.com/x/y/commit/abcdef1",'
+          '"commit":{"message":"main",'
+          '"author":{"date":"2026-01-01T00:00:00Z"}}}]';
     });
 
-    final result = await service.check(const VersionInfo(1, 1, 0, commit: '1111111'));
+    final result = await service.check(
+        const VersionInfo(1, 1, 0, commit: '1111111'));
     expect(result.release, isNull);
     expect(result.commit?.sha, 'abcdef1234567');
+    expect(result.commit?.htmlUrl, contains('github.com'));
+    expect(result.releases, isEmpty);
+    expect(result.commits.length, 1);
     expect(result.commitDiffers, isTrue);
   });
 
   test('a total GitHub failure is surfaced', () async {
-    final service = UpdateService(fetcher: (uri) async {
-      throw Exception('offline');
-    });
+    final service =
+        UpdateService(fetcher: (uri) async => throw Exception('offline'));
     await expectLater(
       service.check(const VersionInfo(1, 1, 0)),
       throwsA(isA<Exception>()),
@@ -75,6 +92,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('v1.0.0 · 1111111'), findsOneWidget);
+    expect(find.text('Update available'), findsOneWidget);
     expect(find.text('Spring cleaning'), findsOneWidget);
     expect(find.textContaining('Fixes the music timecode'), findsOneWidget);
     expect(find.textContaining('feat: browser tabs'), findsOneWidget);
@@ -90,6 +108,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(mode, 'commit');
     expect(target, 'abcdef1234567');
+  });
+
+  testWidgets('commit rows stack and open their GitHub page in the shell',
+      (tester) async {
+    String? opened;
+    final service = _FakeUpdateService(const UpdateCheck(
+      current: VersionInfo(1, 0, 0, commit: '1111111'),
+      commit: CommitInfo(
+        sha: 'abcdef1234567',
+        message: 'feat: browser tabs',
+        date: '2026-01-02T00:00:00Z',
+        htmlUrl: 'https://github.com/x/y/commit/abcdef1',
+      ),
+      commits: [
+        CommitInfo(
+          sha: 'abcdef1234567',
+          message: 'feat: browser tabs\n\nFull commit body',
+          date: '2026-01-02T00:00:00Z',
+          htmlUrl: 'https://github.com/x/y/commit/abcdef1',
+        ),
+        CommitInfo(
+          sha: 'bbbbbbb2222222',
+          message: 'fix: music reset',
+          date: '2026-01-01T00:00:00Z',
+          htmlUrl: 'https://github.com/x/y/commit/bbbbbbb',
+        ),
+      ],
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: SizedBox(
+          width: 700,
+          height: 640,
+          child: UpdaterApp(
+            service: service,
+            repoPath: r'C:\repo',
+            onOpenUrl: (url) => opened = url,
+          ),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('updater-commit-bbbbbbb')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('updater-commit-abcdef1')));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(const ValueKey('updater-detail')), findsOneWidget);
+    expect(find.textContaining('Full commit body'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('updater-open-github')));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(opened, 'https://github.com/x/y/commit/abcdef1');
   });
 
   testWidgets('an up-to-date build offers no release button', (tester) async {
@@ -113,15 +184,13 @@ void main() {
         body: SizedBox(
           width: 700,
           height: 640,
-          child: UpdaterApp(
-            service: service,
-            repoPath: r'C:\repo',
-          ),
+          child: UpdaterApp(service: service, repoPath: r'C:\repo'),
         ),
       ),
     ));
     await tester.pump(const Duration(milliseconds: 100));
 
+    expect(find.text('You are up to date'), findsOneWidget);
     expect(find.text('This is the installed release.'), findsOneWidget);
     expect(find.text('This build is at the latest main commit.'), findsOneWidget);
     expect(find.byKey(const ValueKey('updater-update-release')), findsNothing);

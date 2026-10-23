@@ -222,6 +222,7 @@ void main() {
     await player.select(2, autoplay: true);
     expect(player.currentTime, '0:00');
     expect(player.progress.value, 0.0);
+    expect(player.isPlaying, isTrue);
     expect(engine.calls.where((call) => call == 'seek'), isNotEmpty);
 
     // A late position from the previous source must not move the clock.
@@ -267,6 +268,17 @@ void main() {
     engine.emitPosition(const Duration(seconds: 5));
     await tester.pump();
     expect(player.currentTime, '0:05');
+    await tester.pump(const Duration(milliseconds: 400));
+  });
+
+  _playerTest('selecting a track while paused does not start audio',
+      (tester, player, engine) async {
+    player.setTracks(_tracks, const {});
+    await player.select(1, autoplay: false);
+    expect(player.isPlaying, isFalse);
+    expect(player.currentTime, '0:00');
+    expect(engine.calls, contains('stop'));
+    expect(engine.calls, isNot(contains('play')));
     await tester.pump(const Duration(milliseconds: 400));
   });
 

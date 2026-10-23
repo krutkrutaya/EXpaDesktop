@@ -65,6 +65,7 @@ import 'liquid_glass/wave_slider.dart';
 import 'shell_prefs.dart';
 import 'wifi_control.dart';
 import 'windows_apps.dart';
+import 'windows_app_icons.dart';
 import 'playback/player_controller.dart';
 import 'playback/track.dart';
 import 'player.dart';
@@ -1532,7 +1533,9 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.updates:
         return UpdaterApp(
           current: appVersion,
+          loadVersionAsset: true,
           onUpdate: _startUpdate,
+          onOpenUrl: _openBrowserUrl,
         );
     }
   }
@@ -1551,6 +1554,12 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   bool _openDefaultApp(FileEntry entry) {
+    // The preview button is used mostly for text; a text file always opens
+    // in Notepad, even if an older association table points elsewhere.
+    if (entry.isText) {
+      _openNotepadAt(entry.path);
+      return true;
+    }
     final app = _associations.appFor(entry.path);
     switch (app) {
       case 'notepad':
@@ -1566,6 +1575,11 @@ class _MyHomePageState extends State<MyHomePage>
       default:
         return false;
     }
+  }
+
+  void _openBrowserUrl(String url) {
+    _browserOpenUrl.value = url;
+    _openApp(ShellApp.browser);
   }
 
   void _openFilesAt(String path) {
@@ -1684,6 +1698,8 @@ class _MyHomePageState extends State<MyHomePage>
   }
 
   Future<String?> _startUpdate(String mode, String target, String repo) async {
+    final problem = await UpdateRunner.preflight(repo);
+    if (problem != null) return problem;
     final ok = await UpdateRunner.start(
       repo: repo,
       mode: mode,
@@ -2561,34 +2577,30 @@ class _MyHomePageState extends State<MyHomePage>
                 if (morph == null || f == null) return const SizedBox.shrink();
                 return MorphGlass(
                   frame: f,
-                  restWidth: 380,
-                  restHeight: 360,
+                  restWidth: 320,
+                  restHeight: 296,
                   interactive: true,
                   child: SizedBox(
-                    width: 380,
-                    height: 360,
+                    width: 320,
+                    height: 296,
                     child: Padding(
                       padding: const EdgeInsets.all(11),
                       child: Column(
                         children: [
                           SizedBox(
-                            width: 358,
-                            height: 266,
+                            width: 298,
+                            height: 210,
                             child: Wrap(
                               alignment: WrapAlignment.center,
                               runAlignment: WrapAlignment.center,
                               spacing: 6,
                               runSpacing: 6,
-                              // No per-app entrance animation: the tiles are
-                              // already inside the morphing glass, another
-                              // motion on top only made the menu feel slow.
                               children: [
                                 for (var i = 0; i < _launcherApps.length; i++)
                                   _LauncherTile(
                                     key: ValueKey(
                                         'launcher-app-${_launcherApps[i].id}'),
                                     icon: iconForApp(_launcherApps[i]),
-                                    accent: accentForApp(_launcherApps[i]),
                                     label: _launcherLabel(_launcherApps[i]),
                                     onTap: () => _openApp(_launcherApps[i]),
                                   ),
@@ -2598,8 +2610,6 @@ class _MyHomePageState extends State<MyHomePage>
                           const SizedBox(height: 6),
                           _LauncherStrip(
                             onSettings: () => _openSettingsAt(null),
-                            // The power menu: a small dropdown over the
-                            // launcher's own power button (not the old panel).
                             onPower: _togglePowerMenu,
                             onTerminal: () => _openApp(ShellApp.terminal),
                           ),
@@ -3040,13 +3050,6 @@ class _MyHomePageState extends State<MyHomePage>
         ShellApp.browser,
         ShellApp.musics,
         ShellApp.configs,
-        ShellApp.settings,
-        ShellApp.terminal,
-        ShellApp.clipboard,
-        ShellApp.notifications,
-        ShellApp.calendar,
-        ShellApp.emoji,
-        ShellApp.updates,
       ];
 
   /// Launcher tile labels in the shell language. Windows titles (the window
@@ -4309,14 +4312,12 @@ class _PowerMenuItemState extends State<_PowerMenuItem> {
 /// One launcher tile: icon over a short label.
 class _LauncherTile extends StatefulWidget {
   final IconData icon;
-  final Color accent;
   final String label;
   final VoidCallback onTap;
 
   const _LauncherTile({
     super.key,
     required this.icon,
-    required this.accent,
     required this.label,
     required this.onTap,
   });
@@ -4326,54 +4327,28 @@ class _LauncherTile extends StatefulWidget {
 }
 
 class _LauncherTileState extends State<_LauncherTile> {
-  bool _hovered = false;
-
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: AnimatedScale(
-          scale: _hovered ? 1.06 : 1,
-          duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOutCubic,
-          child: SizedBox(
-            width: 84,
-            height: 62,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: widget.accent.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: widget.accent.withValues(
-                          alpha: _hovered ? 0.65 : 0.30),
-                    ),
-                  ),
-                  child: Icon(widget.icon, color: widget.accent, size: 19),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  widget.label,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _hovered ? Colors.white : Colors.white70,
-                    fontSize: 8.8,
-                    height: 1.1,
-                  ),
-                ),
-              ],
-            ),
+        child: SizedBox(
+          width: 92,
+          height: 58,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, color: Colors.white, size: 23),
+              const SizedBox(height: 3),
+              Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 9.5),
+              ),
+            ],
           ),
         ),
       ),
@@ -4673,7 +4648,11 @@ class _AppsPanelState extends State<_AppsPanel> {
                     key: const ValueKey('apps-list'),
                     children: [
                       for (final app in rows)
-                        _AppsRow(entry: app, onTap: () => widget.onLaunch(app)),
+                        _AppsRow(
+                          key: ValueKey('windows-app-${app.name}'),
+                          entry: app,
+                          onTap: () => widget.onLaunch(app),
+                        ),
                     ],
                   ),
           ),
@@ -4696,7 +4675,7 @@ class _AppsRow extends StatefulWidget {
   final WindowsAppEntry entry;
   final VoidCallback onTap;
 
-  const _AppsRow({required this.entry, required this.onTap});
+  const _AppsRow({super.key, required this.entry, required this.onTap});
 
   @override
   State<_AppsRow> createState() => _AppsRowState();
@@ -4704,6 +4683,32 @@ class _AppsRow extends StatefulWidget {
 
 class _AppsRowState extends State<_AppsRow> {
   bool _hovered = false;
+  Uint8List? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadIcon();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AppsRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entry.name != widget.entry.name ||
+        oldWidget.entry.launchTarget != widget.entry.launchTarget) {
+      _image = null;
+      _loadIcon();
+    }
+  }
+
+  void _loadIcon() {
+    final entry = widget.entry;
+    unawaited(WindowsAppIcons.load(entry).then((bytes) {
+      if (mounted && identical(entry, widget.entry) && bytes != null) {
+        setState(() => _image = bytes);
+      }
+    }));
+  }
 
   IconData get _icon => switch (widget.entry.description) {
         'browser' => Icons.public_rounded,
@@ -4747,7 +4752,17 @@ class _AppsRowState extends State<_AppsRow> {
                   color: Colors.white.withValues(alpha: 0.09),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: Icon(_icon, color: Colors.white70, size: 17),
+                child: _image == null
+                    ? Icon(_icon, color: Colors.white70, size: 17)
+                    : Image.memory(
+                        _image!,
+                        width: 24,
+                        height: 24,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                        errorBuilder: (context, error, stack) =>
+                            Icon(_icon, color: Colors.white70, size: 17),
+                      ),
               ),
               const SizedBox(width: 11),
               Expanded(

@@ -217,12 +217,20 @@ fn run(options: &Options) -> Result<(), String> {
             )?;
         }
     }
-    run_command(
+    let head = git_head(&options.repo)?;
+    // The checkout may have renamed the version file, so find it again.
+    let build_version_file = find_version_file(&options.repo)?;
+    let original = version_text(&build_version_file)?;
+    rewrite_version_commit(&build_version_file, &head)?;
+    let build = run_command(
         Command::new(&options.flutter)
             .current_dir(options.repo.join("ExDesktop"))
             .args(["build", "windows", "--release"]),
         &log_path,
-    )?;
+    );
+    // The built asset keeps the rewritten commit; the checkout stays clean.
+    let _ = fs::write(&build_version_file, original);
+    build?;
 
     let exe = options
         .repo
@@ -235,6 +243,39 @@ fn run(options: &Options) -> Result<(), String> {
         .map_err(|error| format!("cannot relaunch the app: {error}"))?;
     append_log(&log_path, &format!("launched {}", exe.display()));
     Ok(())
+}
+
+fn git_head(repo: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| format!("cannot read HEAD: {error}"))?;
+    if !output.status.success() {
+        return Err("git rev-parse HEAD failed".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Writes `commit=<head>` into the version file. The caller restores the
+/// original bytes after the build, so the checkout remains clean while the
+/// built asset reports the right commit.
+fn rewrite_version_commit(path: &Path, head: &str) -> Result<(), String> {
+    let text = version_text(path)?;
+    let mut lines: Vec<String> = text.lines().map(|line| line.to_string()).collect();
+    let mut found = false;
+    for line in &mut lines {
+        if line.trim_start().starts_with("commit=") {
+            *line = format!("commit={head}");
+            found = true;
+        }
+    }
+    if !found {
+        lines.push(format!("commit={head}"));
+    }
+    fs::write(path, lines.join("\n") + "\n")
+        .map_err(|error| format!("cannot rewrite {}: {error}", path.display()))
 }
 
 fn run_command(command: &mut Command, log_path: &Path) -> Result<(), String> {
@@ -403,6 +444,20 @@ mod tests {
         fs::write(temp.join("version_1.1.0.txt"), "version=1.1.0\n").unwrap();
         let error = find_version_file(&temp).unwrap_err();
         assert!(error.contains("multiple version files"));
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn the_built_asset_records_the_checked_out_commit() {
+        let temp = std::env::temp_dir().join("expa_updater_commit");
+        let _ = fs::remove_dir_all(&temp);
+        let _ = fs::create_dir_all(&temp);
+        let file = temp.join("version_1.3.0.txt");
+        fs::write(&file, "version=1.3.0\ncommit=old1234\n").unwrap();
+        rewrite_version_commit(&file, "new5678").unwrap();
+        let text = version_text(&file).unwrap();
+        assert!(text.contains("commit=new5678"));
+        assert!(text.contains("version=1.3.0"));
         let _ = fs::remove_dir_all(&temp);
     }
 }

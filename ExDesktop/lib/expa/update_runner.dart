@@ -44,6 +44,31 @@ abstract final class UpdateRunner {
     return null;
   }
 
+  /// Refuses to update a dirty checkout: the Rust helper would abort after
+  /// the desktop already closed, which looked like "the updater did nothing".
+  static Future<String?> preflight(String repo) async {
+    final gitDir = Directory('$repo${Platform.pathSeparator}.git');
+    if (!gitDir.existsSync()) {
+      return 'That folder is not a git repository.';
+    }
+    try {
+      final status = await Process.run(
+        'git',
+        ['-C', repo, 'status', '--porcelain'],
+        stdoutEncoding: const SystemEncoding(),
+      );
+      if (status.exitCode != 0) {
+        return 'git could not read this repository.';
+      }
+      if ('${status.stdout}'.trim().isNotEmpty) {
+        return 'The repository has uncommitted changes. Commit or stash them first.';
+      }
+    } catch (error) {
+      return 'Could not run git: $error';
+    }
+    return null;
+  }
+
   /// Starts the updater detached. Returns false when the binary is missing.
   static Future<bool> start({
     required String repo,

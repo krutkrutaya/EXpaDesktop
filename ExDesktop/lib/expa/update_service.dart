@@ -15,12 +15,14 @@ class ReleaseInfo {
   final String name;
   final String body;
   final String publishedAt;
+  final String htmlUrl;
 
   const ReleaseInfo({
     required this.tag,
     required this.name,
     required this.body,
     required this.publishedAt,
+    this.htmlUrl = '',
   });
 }
 
@@ -28,11 +30,13 @@ class CommitInfo {
   final String sha;
   final String message;
   final String date;
+  final String htmlUrl;
 
   const CommitInfo({
     required this.sha,
     required this.message,
     required this.date,
+    this.htmlUrl = '',
   });
 
   String get shortSha => sha.length > 7 ? sha.substring(0, 7) : sha;
@@ -42,11 +46,15 @@ class UpdateCheck {
   final VersionInfo current;
   final ReleaseInfo? release;
   final CommitInfo? commit;
+  final List<ReleaseInfo> releases;
+  final List<CommitInfo> commits;
 
   const UpdateCheck({
     required this.current,
     this.release,
     this.commit,
+    this.releases = const [],
+    this.commits = const [],
   });
 
   VersionInfo? get releaseVersion =>
@@ -78,23 +86,23 @@ class UpdateService {
   Future<UpdateCheck> check(VersionInfo current) async {
     final base = 'https://api.github.com/repos/$repository';
 
-    // The two endpoints are independent: GitHub returns 404 for a repository
-    // without releases, which must not hide the latest commit. Fetch them in
-    // parallel and keep whichever succeeded.
-    Future<Object?> fetchRelease() async {
+    // Lists give both the newest item and the stacked history the Updater
+    // shows. A repository with no releases simply returns []; that must not
+    // hide the commits.
+    Future<Object?> fetchReleases() async {
       try {
-        return parseRelease(
-          await _fetcher(Uri.parse('$base/releases/latest')),
+        return parseReleaseList(
+          await _fetcher(Uri.parse('$base/releases?per_page=10')),
         );
       } catch (error) {
         return error;
       }
     }
 
-    Future<Object?> fetchCommit() async {
+    Future<Object?> fetchCommits() async {
       try {
-        return parseCommit(
-          await _fetcher(Uri.parse('$base/commits/main')),
+        return parseCommitList(
+          await _fetcher(Uri.parse('$base/commits?per_page=10')),
         );
       } catch (error) {
         return error;
@@ -102,28 +110,30 @@ class UpdateService {
     }
 
     final results = await Future.wait<Object?>([
-      fetchRelease(),
-      fetchCommit(),
+      fetchReleases(),
+      fetchCommits(),
     ]);
-    ReleaseInfo? release;
-    CommitInfo? commit;
+    var releases = const <ReleaseInfo>[];
+    var commits = const <CommitInfo>[];
     Object? firstError;
     for (final result in results) {
-      if (result is ReleaseInfo) {
-        release = result;
-      } else if (result is CommitInfo) {
-        commit = result;
+      if (result is List<ReleaseInfo>) {
+        releases = result;
+      } else if (result is List<CommitInfo>) {
+        commits = result;
       } else if (result != null) {
         firstError ??= result;
       }
     }
-    if (release == null && commit == null && firstError != null) {
+    if (releases.isEmpty && commits.isEmpty && firstError != null) {
       throw firstError;
     }
     return UpdateCheck(
       current: current,
-      release: release,
-      commit: commit,
+      release: releases.isEmpty ? null : releases.first,
+      commit: commits.isEmpty ? null : commits.first,
+      releases: releases,
+      commits: commits,
     );
   }
 
@@ -138,9 +148,25 @@ class UpdateService {
         name: '${map['name'] ?? tag}',
         body: '${map['body'] ?? ''}',
         publishedAt: '${map['published_at'] ?? ''}',
+        htmlUrl: '${map['html_url'] ?? ''}',
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  static List<ReleaseInfo> parseReleaseList(String json) {
+    try {
+      final decoded = jsonDecode(json);
+      if (decoded is! List) return const [];
+      return [
+        for (final item in decoded)
+          if (item is Map)
+            if (parseRelease(jsonEncode(item)) case final release?)
+              release,
+      ];
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -154,9 +180,29 @@ class UpdateService {
       final message = commit is Map ? '${commit['message'] ?? ''}' : '';
       final author = commit is Map ? commit['author'] : null;
       final date = author is Map ? '${author['date'] ?? ''}' : '';
-      return CommitInfo(sha: sha, message: message, date: date);
+      return CommitInfo(
+        sha: sha,
+        message: message,
+        date: date,
+        htmlUrl: '${map['html_url'] ?? ''}',
+      );
     } catch (_) {
       return null;
+    }
+  }
+
+  static List<CommitInfo> parseCommitList(String json) {
+    try {
+      final decoded = jsonDecode(json);
+      if (decoded is! List) return const [];
+      return [
+        for (final item in decoded)
+          if (item is Map)
+            if (parseCommit(jsonEncode(item)) case final commit?)
+              commit,
+      ];
+    } catch (_) {
+      return const [];
     }
   }
 

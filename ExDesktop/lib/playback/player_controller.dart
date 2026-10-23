@@ -237,6 +237,7 @@ class PlayerController extends ChangeNotifier {
     if (_tracks.isEmpty) return;
     final wanted = index.clamp(0, _tracks.length - 1);
     final shouldPlay = autoplay ?? _isPlaying;
+    _isPlaying = shouldPlay;
     _index = wanted;
     _isLoaded = false;
     _pendingSeek = null;
@@ -247,6 +248,7 @@ class PlayerController extends ChangeNotifier {
     time.value = _currentTime;
     _totalDuration = track!.duration.isEmpty ? '0:00' : track!.duration;
     _duration = parsePlaybackTime(track!.duration) ?? Duration.zero;
+    _startSpin();
     notifyListeners();
 
     if (shouldPlay) {

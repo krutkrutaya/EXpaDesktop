@@ -31,7 +31,7 @@ minimize and close. Nothing launches a second Windows window.
 | | |
 |---|---|
 | Calculator | a real four-function calculator with keyboard input |
-| Notepad | autosaves to `%APPDATA%\EXpaDesktop\notes.txt`; opens text files from Files and saves edits back to them |
+| Notepad | tabs, autosave for the shared note, file-backed tabs and Save As |
 | Files | a directory browser with text and image preview; double-click follows the desktop's file associations |
 | Paint | a stroke canvas with colours, eraser, undo and PNG export to Pictures |
 | Snip | captures the shell itself, previews and saves the shot |
@@ -61,10 +61,11 @@ minimize and close. Nothing launches a second Windows window.
 - **Drag** by the title bar, **resize** from the corner, **double-click** the
   title to maximize/restore. Dragging repaints only that window.
 - The dock shows one icon per open window: click to focus, click the focused
-  one to minimize. Every built-in app opened from the launcher gets its own
-  accent-tinted dock task with the same fade/scale in and the same exit fade;
-  the 16-tile launcher covers Calculator, Files, Settings, Clipboard,
-  Notifications, Calendar, Emoji, Updater and the rest.
+  one to minimize. Settings and every other built-in app use the same
+  accent-tinted dock task, in/out fade and genie; the nine-tile launcher keeps
+  its original compact layout.
+- The Programs panel extracts real Start-menu icons (shortcut target or Store
+  package logo) and caches them under `%APPDATA%\EXpaDesktop\app_icons`.
 
 ## 🌊 Liquid Glass Animations
 
@@ -387,7 +388,7 @@ cargo test                                # 9 pure unit tests
 cd ../updater
 cargo build --release
 cp target/release/updater.exe .
-cargo test                                # 5 version/plan unit tests
+cargo test                                # 7 version/plan/version-file unit tests
 ```
 
 - **updater.exe** — the release-the-app helper: `git fetch`, check out the
@@ -420,13 +421,15 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.3.0
-commit=8103a11
+version=1.4.0
+commit=d9ec380
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
-`GET /repos/krutkrutaya/EXpaDesktop/releases/latest` and `/commits/main`, and
-the Updater window shows both changelogs. “Update to release” passes the real
+`GET /repos/krutkrutaya/EXpaDesktop/releases?per_page=10` and
+`/commits?per_page=10`; the Updater shows the last ten of each, an
+up-to-date/update-available banner, and a detail sheet per item that can open
+the commit/release in the in-shell Browser. “Update to release” passes the real
 tag (e.g. `v1.1.0`); “Update to main” pulls the latest commit. The Rust
 `updater.exe` double-checks the version file, refuses a downgrade or a dirty
 tree, builds and relaunches. To bump the version, rename the file and update
@@ -437,12 +440,12 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1627 checks** with the optional Rust DLLs built, plus **94 widget tests**,
-**9 sysctl Rust tests** and **6 updater Rust tests**.
+**1627 checks** with the optional Rust DLLs built, plus **100 widget tests**,
+**9 sysctl Rust tests** and **7 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 94 widget tests
+flutter test                                 # 100 widget tests
 flutter analyze                              # No issues found
 dart run test/mock_all.dart                  # 1627 mock checks
 dart run test/exwm_check.dart                # window manager + snap: 51 checks
