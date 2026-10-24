@@ -12,6 +12,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('the updater points at the suptewme mirror by default', () {
+    expect(UpdateService().repository, 'suptewme/EXpaDesktop');
+  });
+
+  testWidgets('the Check button stays pinned to the right edge', (tester) async {
+    final service = _FakeUpdateService(const UpdateCheck(
+      current: VersionInfo(1, 4, 2, commit: 'abcdef1'),
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: SizedBox(
+          width: 900,
+          height: 640,
+          child: UpdaterApp(service: service, repoPath: r'C:\repo'),
+        ),
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final button = tester.getRect(find.byKey(const ValueKey('updater-check')));
+    final host = tester.getRect(find.byType(UpdaterApp));
+    expect(host.right - button.right, lessThan(20));
+    expect(button.right, greaterThan(host.right - 20));
+  });
+
   test('the updater refuses a dirty git checkout before closing the app',
       () async {
     final dir = Directory.systemTemp.createTempSync('expa_dirty_repo');

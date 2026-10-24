@@ -1,6 +1,6 @@
 name: exp_desktop
 description: EXpDesktop launcher
-version: 1.4.2
+version: 1.4.3
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -24,4 +24,4 @@ flutter:
     - assets/fons/
     - assets/icons/
     - assets/music/
-    - version_1.4.2.txt
+    - version_1.4.3.txt

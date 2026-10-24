@@ -185,27 +185,32 @@ class _UpdaterAppState extends State<UpdaterApp> {
         children: [
           Row(
             children: [
-              const Icon(Icons.system_update_alt_rounded,
-                  size: 20, color: Colors.white70),
-              const SizedBox(width: 9),
-              Text(
-                Loc.t('Updater', 'Обновления'),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Caption(
-                  'v${_current.version}'
-                  '${_current.commit.isEmpty ? '' : ' · ${_current.commit.substring(0, _current.commit.length.clamp(0, 7))}'}',
-                  maxLines: 1,
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.system_update_alt_rounded,
+                        size: 20, color: Colors.white70),
+                    const SizedBox(width: 9),
+                    Text(
+                      Loc.t('Updater', 'Обновления'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Caption(
+                        'v${_current.version}'
+                        '${_current.commit.isEmpty ? '' : ' · ${_current.commit.substring(0, _current.commit.length.clamp(0, 7))}'}',
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
-              const Spacer(),
               PillButton(
                 key: const ValueKey('updater-check'),
                 label: Loc.t('Check', 'Проверить'),

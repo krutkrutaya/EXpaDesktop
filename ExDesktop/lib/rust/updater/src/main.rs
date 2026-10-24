@@ -115,9 +115,13 @@ fn parse_args() -> Option<Options> {
     })
 }
 
+fn update_repo_url() -> &'static str {
+    "https://github.com/suptewme/EXpaDesktop.git"
+}
+
 fn release_archive_url(tag: &str) -> String {
     format!(
-        "https://github.com/krutkrutaya/EXpaDesktop/archive/refs/tags/{tag}.zip"
+        "https://github.com/suptewme/EXpaDesktop/archive/refs/tags/{tag}.zip"
     )
 }
 
@@ -146,11 +150,11 @@ fn plan_lines(options: &Options) -> Vec<String> {
             lines.push(format!("git reset --hard tags/{}", options.target));
         }
         Mode::Commit => {
-            lines.push("git fetch origin main".to_string());
+            lines.push(format!("git fetch {} main", update_repo_url()));
             // A hard reset applies modified and new files **and removes files
             // the target commit deleted**; `pull` alone can leave stale files
             // behind when the history was rewritten or the tree diverged.
-            lines.push("git reset --hard origin/main".to_string());
+            lines.push("git reset --hard FETCH_HEAD".to_string());
         }
     }
     lines.push(format!(
@@ -264,14 +268,16 @@ fn run(options: &Options) -> Result<(), String> {
                 Command::new("git")
                     .arg("-C")
                     .arg(&options.repo)
-                    .args(["fetch", "origin", "main"]),
+                    .arg("fetch")
+                    .arg(update_repo_url())
+                    .arg("main"),
                 &log_path,
             )?;
             run_command(
                 Command::new("git")
                     .arg("-C")
                     .arg(&options.repo)
-                    .args(["reset", "--hard", "origin/main"]),
+                    .args(["reset", "--hard", "FETCH_HEAD"]),
                 &log_path,
             )?;
         }
@@ -461,7 +467,7 @@ mod tests {
         let lines = plan_lines(&options);
         assert!(lines
             .iter()
-            .any(|line| line.contains("Invoke-WebRequest https://github.com/")));
+            .any(|line| line.contains("Invoke-WebRequest https://github.com/suptewme/EXpaDesktop/archive")));
         assert!(lines.iter().any(|line| line.contains("Expand-Archive")));
         assert!(lines.iter().any(|line| line.contains("robocopy .release-src/* . /MIR")));
         assert!(lines
@@ -473,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_plan_resets_to_origin_main() {
+    fn commit_plan_resets_to_suptewme_main() {
         let options = Options {
             repo: PathBuf::from("C:/repo"),
             mode: Mode::Commit,
@@ -484,7 +490,10 @@ mod tests {
             pid: None,
         };
         let lines = plan_lines(&options);
-        assert!(lines.iter().any(|line| line.contains("git reset --hard origin/main")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("git fetch https://github.com/suptewme/EXpaDesktop.git main")));
+        assert!(lines.iter().any(|line| line.contains("git reset --hard FETCH_HEAD")));
         assert!(lines
             .iter()
             .any(|line| line.contains("C:/flutter/bin/flutter.bat build")));

@@ -203,6 +203,81 @@ void main() {
     expect(opened, contains('C:'));
   });
 
+  testWidgets('the display pane carries a reset button', (tester) async {
+    await _open(tester, section: 'display');
+    expect(
+      find.byKey(const ValueKey('settings-reset-display')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('every settings pane carries a Reset to defaults button',
+      (tester) async {
+    for (final section in [
+      'sound',
+      'display',
+      'pointer',
+      'keyboard',
+      'accessibility',
+      'bluetooth',
+      'drives',
+      'wifi',
+      'appearance',
+      'associations',
+      'notifications',
+      'multitasking',
+      'lock',
+      'datetime',
+      'language',
+      'updates',
+    ]) {
+      await _open(tester, section: section);
+      expect(
+        find.byKey(ValueKey('settings-reset-$section')),
+        findsOneWidget,
+        reason: 'reset button missing on $section',
+      );
+    }
+  });
+
+  testWidgets('Reset to defaults restores the pointer settings',
+      (tester) async {
+    final source = _FakeInput()
+      ..mouseSpeed = 20
+      ..mouseSwap = true
+      ..wheelLines = 18
+      ..keyDelay = 3
+      ..keySpeed = 3;
+    await _open(tester, section: 'pointer', inputSource: source);
+
+    await tester.tap(find.byKey(const ValueKey('settings-reset-pointer')));
+    await _settle(tester);
+
+    expect(source.mouseSpeed, 10);
+    expect(source.mouseSwap, isFalse);
+    expect(source.wheelLines, 3);
+    expect(source.keyDelay, 1);
+    expect(source.keySpeed, 31);
+  });
+
+  testWidgets('Reset to defaults restores the file associations',
+      (tester) async {
+    FileAssociations? saved;
+    await _open(
+      tester,
+      section: 'associations',
+      associations:
+          const FileAssociations({'txt': 'paint'}),
+      onAssociations: (value) => saved = value,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('settings-reset-associations')));
+    await _settle(tester);
+
+    expect(saved, FileAssociations.standard);
+    expect(saved?.byExtension['txt'], 'notepad');
+  });
+
   testWidgets('the pointer pane reports the speed and writes the swap',
       (tester) async {
     final source = _FakeInput(mouseSpeed: 7);
@@ -533,6 +608,7 @@ Widget _settings({
   final nav = navigator ?? SettingsNavigator();
   if (navigator == null) nav.show(section);
   return SettingsView(
+    key: ValueKey('settings-view-$section'),
     navigator: nav,
     radio: radio,
     sound: sound,

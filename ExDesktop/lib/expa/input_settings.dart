@@ -65,6 +65,19 @@ class InputSettings {
     keySpeed = source.keySpeed ?? keySpeed;
   }
 
+  void reset() {
+    mouseSpeed = 10;
+    mouseSwap = false;
+    wheelLines = 3;
+    keyDelay = 1;
+    keySpeed = 31;
+    source.setMouseSpeed(mouseSpeed);
+    source.setMouseSwap(mouseSwap);
+    source.setWheelLines(wheelLines);
+    source.setKeyDelay(keyDelay);
+    source.setKeySpeed(keySpeed);
+  }
+
   void updateMouseSpeed(int value) {
     mouseSpeed = value.clamp(1, 20);
     source.setMouseSpeed(mouseSpeed);

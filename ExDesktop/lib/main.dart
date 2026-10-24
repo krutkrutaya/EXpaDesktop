@@ -55,6 +55,7 @@ import 'expa/default_apps.dart';
 import 'expa/expa_theme.dart';
 import 'expa/notifications.dart';
 import 'expa/update_runner.dart';
+import 'expa/update_service.dart';
 import 'expa/version.dart';
 import 'i18n.dart';
 import 'native/sysctl.dart';
@@ -117,6 +118,7 @@ class MyHomePage extends StatefulWidget {
     this.audio,
     this.wifiNetworks,
     this.windowsApps,
+    this.updateService,
   });
 
   /// Test seams: the widget tests pass recorders so no test spawns
@@ -132,6 +134,9 @@ class MyHomePage extends StatefulWidget {
   /// Test seam: a fixed Start-menu list so the Programs panel can be checked
   /// without spawning PowerShell.
   final List<WindowsAppEntry>? windowsApps;
+
+  /// Test seam: a fake GitHub source for the startup update check.
+  final UpdateService? updateService;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -467,6 +472,7 @@ class _MyHomePageState extends State<MyHomePage>
     }
     unawaited(_scanMusicAssets());
     unawaited(_loadFileLibrary());
+    unawaited(_checkForUpdatesAtStartup());
     if (widget.windowsApps != null) {
       _windowsApps = widget.windowsApps!;
     } else {
@@ -1560,7 +1566,10 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.clipboard:
         return const ClipboardApp();
       case ShellApp.notifications:
-        return NotificationsApp(center: _notifications);
+        return NotificationsApp(
+          center: _notifications,
+          onOpen: _openNotification,
+        );
       case ShellApp.calendar:
         return const CalendarApp();
       case ShellApp.emoji:
@@ -1568,6 +1577,7 @@ class _MyHomePageState extends State<MyHomePage>
       case ShellApp.updates:
         return UpdaterApp(
           current: appVersion,
+          service: widget.updateService,
           loadVersionAsset: true,
           onUpdate: _startUpdate,
           onOpenUrl: _openBrowserUrl,
@@ -1679,10 +1689,12 @@ class _MyHomePageState extends State<MyHomePage>
 
   void _newWorkspace() {
     setState(_workspaces.create);
+    _desktopsMorph?.close();
   }
 
   void _closeWorkspace() {
     setState(_workspaces.closeActive);
+    _desktopsMorph?.close();
   }
 
   void _selectWorkspace(int index) {
@@ -1704,11 +1716,48 @@ class _MyHomePageState extends State<MyHomePage>
         _notifications.post(title, body, category: category);
     setState(() => _toast = item);
     _toastTimer?.cancel();
-    _toastTimer = Timer(const Duration(seconds: 4), () {
+    _toastTimer = Timer(const Duration(seconds: 8), () {
       if (mounted && _toast?.id == item.id) {
         setState(() => _toast = null);
       }
     });
+  }
+
+  /// One silent GitHub check after the shell opens. It uses the live repo HEAD
+  /// so a checkout that is already current does not cry wolf, and it posts a
+  /// notification (the toast opens the Updater) when origin is ahead.
+  Future<void> _checkForUpdatesAtStartup() async {
+    try {
+      final check = await (widget.updateService ?? UpdateService())
+          .check(appVersion);
+      if (!mounted) return;
+      final available =
+          check.hasNewerRelease || (check.commit?.sha.isNotEmpty ?? false);
+      if (!available) return;
+      final release = check.release;
+      _notify(
+        'Update available',
+        release == null
+            ? 'A newer commit is on GitHub.'
+            : '${release.tag} · ${release.name}',
+        category: 'updates',
+      );
+    } catch (_) {
+      // Offline at startup is normal; the Updater window retries on demand.
+    }
+  }
+
+  void _openNotification(ShellNotification item) {
+    switch (item.category) {
+      case 'updates':
+        _openApp(ShellApp.updates);
+      case 'music':
+        _openApp(ShellApp.musics);
+      case 'network':
+        _openSettingsAt('wifi');
+      default:
+        _openApp(ShellApp.notifications);
+    }
   }
 
   /// The Updater window's action: start the Rust helper, then close this
@@ -1767,11 +1816,13 @@ class _MyHomePageState extends State<MyHomePage>
   void _nextWorkspace() {
     if (_workspaces.count < 2) return;
     setState(_workspaces.next);
+    _desktopsMorph?.close();
   }
 
   void _previousWorkspace() {
     if (_workspaces.count < 2) return;
     setState(_workspaces.previous);
+    _desktopsMorph?.close();
   }
 
   DateTime _lastDesktopWheel = DateTime.fromMillisecondsSinceEpoch(0);
@@ -3032,8 +3083,18 @@ class _MyHomePageState extends State<MyHomePage>
                   key: const ValueKey('shell-toast'),
                   notification: _toast!,
                   onTap: () {
+                    final category = _toast?.category;
                     setState(() => _toast = null);
-                    _openApp(ShellApp.notifications);
+                    switch (category) {
+                      case 'updates':
+                        _openApp(ShellApp.updates);
+                      case 'music':
+                        _openApp(ShellApp.musics);
+                      case 'network':
+                        _openSettingsAt('wifi');
+                      default:
+                        _openApp(ShellApp.notifications);
+                    }
                   },
                 ),
               ),
@@ -4593,6 +4654,8 @@ class _AppsPanel extends StatefulWidget {
 }
 
 class _AppsPanelState extends State<_AppsPanel> {
+  final ScrollController _scroll = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -4608,6 +4671,7 @@ class _AppsPanelState extends State<_AppsPanel> {
   void dispose() {
     // The controller is owned by the shell; just stop listening.
     widget.search.removeListener(_onSearch);
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -4681,16 +4745,22 @@ class _AppsPanelState extends State<_AppsPanel> {
                       style: const TextStyle(color: Colors.white38, fontSize: 12),
                     ),
                   )
-                : ListView(
-                    key: const ValueKey('apps-list'),
-                    children: [
-                      for (final app in rows)
-                        _AppsRow(
-                          key: ValueKey('windows-app-${app.name}'),
-                          entry: app,
-                          onTap: () => widget.onLaunch(app),
-                        ),
-                    ],
+                : Scrollbar(
+                    controller: _scroll,
+                    thumbVisibility: true,
+                    interactive: true,
+                    child: ListView(
+                      controller: _scroll,
+                      key: const ValueKey('apps-list'),
+                      children: [
+                        for (final app in rows)
+                          _AppsRow(
+                            key: ValueKey('windows-app-${app.name}'),
+                            entry: app,
+                            onTap: () => widget.onLaunch(app),
+                          ),
+                      ],
+                    ),
                   ),
           ),
         ],

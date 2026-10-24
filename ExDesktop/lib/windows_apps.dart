@@ -87,7 +87,11 @@ abstract final class WindowsApps {
 static bool isListable(String launchId) {
   final id = launchId.toLowerCase();
   if (id.endsWith('.exe')) return false;
-  return id.contains('!') || id.endsWith('.lnk') || id.contains('{');
+  return id.contains('!') ||
+      id.endsWith('.lnk') ||
+      id.endsWith('.url') ||
+      id.endsWith('.appref-ms') ||
+      id.contains('{');
 }
 
   /// Reads the Start menu. Returns the apps sorted by name so the search
@@ -96,14 +100,35 @@ static bool isListable(String launchId) {
     if (_busy) return const [];
     _busy = true;
     try {
-      final result = await runPowerShell(
-        'Get-StartApps | ForEach-Object { "{0}|{1}" -f \$_.AppID, \$_.Name }',
-      );
+      // Get-StartApps is the authoritative Start-menu view. The extra
+      // recursive pass over the two Programs folders catches installed apps
+      // that the shell has not enumerated yet (Bloxstrap and friends) —
+      // still only Start-menu shortcuts, never a walk over C:\.
+      final result = await runPowerShell('''
+\$rows = New-Object System.Collections.Generic.List[string]
+Get-StartApps | ForEach-Object {
+  \$rows.Add(("{0}|{1}" -f \$_.AppID, \$_.Name))
+}
+\$roots = @(
+  (Join-Path \$env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'),
+  (Join-Path \$env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs')
+)
+foreach (\$root in \$roots) {
+  if (-not (Test-Path -LiteralPath \$root)) { continue }
+  Get-ChildItem -LiteralPath \$root -Recurse -File `
+    -Include *.lnk,*.url,*.appref-ms -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      \$rows.Add(("{0}|{1}" -f \$_.FullName, \$_.BaseName))
+    }
+}
+\$rows | Sort-Object -Unique
+''');
       if (result.exitCode != 0) {
-        throw 'Get-StartApps failed with code ${result.exitCode}';
+        throw 'Start-menu scan failed with code ${result.exitCode}';
       }
       final found = <WindowsAppEntry>[];
-      for (final line in result.stdout.toString().split('\n')) {
+      final seen = <String>{};
+      for (final line in result.stdout.split('\n')) {
         final raw = line.trim();
         if (raw.isEmpty) continue;
         final cut = raw.indexOf('|');
@@ -112,6 +137,8 @@ static bool isListable(String launchId) {
         var name = raw.substring(cut + 1).trim();
         if (!isListable(launchId)) continue;
         if (name.isEmpty) name = launchId;
+        final key = '$name\u0000$launchId';
+        if (!seen.add(key)) continue;
         found.add(WindowsAppEntry(name: name, launchTarget: launchId));
       }
       found.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));

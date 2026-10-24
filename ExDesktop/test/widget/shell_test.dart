@@ -10,6 +10,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:exp_desktop/expa/update_service.dart';
+import 'package:exp_desktop/expa/version.dart';
 import 'package:exp_desktop/main.dart';
 import 'package:exp_desktop/playback/player_controller.dart';
 import 'package:exp_desktop/radio_control.dart';
@@ -29,6 +31,28 @@ void main() {
     expect(find.byKey(const ValueKey('apps-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('desktop-dots')), findsOneWidget);
     expect(find.byKey(const ValueKey('mini-player')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a newer GitHub build posts a working update notification',
+      (tester) async {
+    final service = _FakeUpdateService(const UpdateCheck(
+      current: appVersion,
+      commit: CommitInfo(
+        sha: '1234567890abcdef',
+        message: 'newer main',
+        date: '2026-01-01T00:00:00Z',
+      ),
+    ));
+    await _pumpShell(tester, updateService: service);
+
+    await _settle(tester, frames: 80);
+    expect(find.byKey(const ValueKey('shell-toast')), findsOneWidget);
+    expect(find.text('Update available'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('shell-toast')));
+    await _settle(tester, frames: 80);
+    expect(find.byKey(const ValueKey('updater-status')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -305,27 +329,36 @@ void main() {
     expect(find.byKey(const ValueKey('volume-flyout')), findsNothing);
   });
 
-  testWidgets('the workspace panel stays open while desktops are added',
+  testWidgets('workspace actions close the panel and still change the list',
       (tester) async {
     await _pumpShell(tester);
 
-    await tester.tap(find.byKey(const ValueKey('desktop-dots')));
-    await _settle(tester);
+    Future<void> openPanel() async {
+      await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+      await _settle(tester);
+    }
+
+    await openPanel();
     expect(find.text('Desktop 1 of 1'), findsOneWidget);
-
     await tester.tap(find.byKey(const ValueKey('workspace-new')));
     await _settle(tester, frames: 60);
+    expect(find.byKey(const ValueKey('workspace-new')), findsNothing);
+
+    await openPanel();
     await tester.tap(find.byKey(const ValueKey('workspace-new')));
     await _settle(tester, frames: 60);
+    expect(find.byKey(const ValueKey('workspace-new')), findsNothing);
 
-    // The panel did not close; the chips grew.
-    expect(find.byKey(const ValueKey('workspace-new')), findsOneWidget);
+    await openPanel();
     expect(find.text('Desktop 3 of 3'), findsOneWidget);
     expect(find.byKey(const ValueKey('workspace-chip-2')), findsOneWidget);
     expect(find.byKey(const ValueKey('workspace-dot-2')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('workspace-close')));
     await _settle(tester, frames: 60);
+    expect(find.byKey(const ValueKey('workspace-close')), findsNothing);
+
+    await openPanel();
     expect(find.text('Desktop 2 of 2'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -486,6 +519,75 @@ void main() {
     // The old fallback was the generic 9-square icon; the tile now uses a
     // colored letter while the real icon is loading or unavailable.
     expect(find.byIcon(Icons.apps_rounded), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('workspace actions close the desktops panel', (tester) async {
+    await _pumpShell(tester);
+
+    Future<void> openPanel() async {
+      await tester.tap(find.byKey(const ValueKey('desktop-dots')));
+      await _settle(tester);
+      expect(find.byKey(const ValueKey('workspace-new')), findsOneWidget);
+    }
+
+    await openPanel();
+    await tester.tap(find.byKey(const ValueKey('workspace-new')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('workspace-new')), findsNothing);
+
+    await openPanel();
+    await tester.tap(find.byKey(const ValueKey('workspace-prev')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('workspace-prev')), findsNothing);
+
+    await openPanel();
+    await tester.tap(find.byKey(const ValueKey('workspace-next')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('workspace-next')), findsNothing);
+
+    await openPanel();
+    await tester.tap(find.byKey(const ValueKey('workspace-close')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('workspace-close')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the programs panel searches, scrolls and keeps the scrollbar',
+      (tester) async {
+    final apps = List.generate(
+      30,
+      (i) => WindowsAppEntry(
+        name: 'Installed App $i',
+        launchTarget: 'C:/apps/app$i.lnk',
+      ),
+    );
+    await _pumpShell(tester, windowsApps: apps);
+
+    await tester.tap(find.byKey(const ValueKey('topbar-programs')));
+    await _settle(tester);
+    expect(find.byType(Scrollbar), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('apps-search')),
+      'Installed App 29',
+    );
+    await _settle(tester, frames: 20);
+    expect(
+      find.byKey(const ValueKey('windows-app-Installed App 29')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('windows-app-Installed App 0')),
+      findsNothing,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('apps-search')),
+      'nothing matches this',
+    );
+    await _settle(tester, frames: 20);
+    expect(find.text('Nothing found'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -705,6 +807,7 @@ Future<void> _pumpShell(
   AudioEngine? audio,
   List<WifiNetwork>? wifiNetworks,
   List<WindowsAppEntry>? windowsApps,
+  UpdateService? updateService,
 }) async {
   // Hermetic prefs: the waybar list, slideshow and display choices of the
   // machine running the tests must never leak into a shell test.
@@ -728,6 +831,7 @@ Future<void> _pumpShell(
       audio: audio ?? _FakeAudio(),
       wifiNetworks: wifiNetworks,
       windowsApps: windowsApps,
+      updateService: updateService,
     ),
   ));
   await _settle(tester);
@@ -800,6 +904,17 @@ class _FakeRadio implements RadioSource {
 }
 
 /// The audio backend without audio: records what the player asked for.
+class _FakeUpdateService extends UpdateService {
+  _FakeUpdateService(this.result) : super(fetcher: _neverFetch);
+
+  final UpdateCheck result;
+
+  @override
+  Future<UpdateCheck> check(VersionInfo current) async => result;
+}
+
+Future<String> _neverFetch(Uri uri) async => '{}';
+
 class _FakeAudio implements AudioEngine {
   final StreamController<Duration> _positions =
       StreamController<Duration>.broadcast();

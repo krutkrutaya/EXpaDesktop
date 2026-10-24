@@ -764,9 +764,101 @@ class _SettingsViewState extends State<SettingsView> {
             ),
           ),
         ),
+        _resetButton(item),
         if (trailing != null) trailing,
       ],
     );
+  }
+
+  Widget _resetButton(SettingsItem item) {
+    return Tooltip(
+      message: Loc.t('Reset to defaults', 'Сбросить по умолчанию'),
+      child: GestureDetector(
+        key: ValueKey('settings-reset-${item.section}'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _resetSection(item),
+        child: Container(
+          width: 30,
+          height: 26,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.restart_alt_rounded,
+            size: 15,
+            color: Colors.white54,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _resetSection(SettingsItem item) {
+    switch (item.section) {
+      case 'sound':
+        final sound = _soundSource;
+        sound.volume = 0.7;
+        sound.muted = false;
+        setState(() {});
+        break;
+      case 'display':
+        widget.display.onBrightness(0.7);
+        widget.display.onContrast(0.7);
+        widget.display.onWarmth(0.0);
+        setState(() {});
+        break;
+      case 'pointer':
+      case 'keyboard':
+        _input.reset();
+        setState(() {});
+        break;
+      case 'accessibility':
+      case 'appearance':
+      case 'multitasking':
+        _commitConfig(DeConfig.defaults);
+        break;
+      case 'drives':
+        unawaited(_loadDrives());
+        break;
+      case 'associations':
+        widget.onAssociations?.call(FileAssociations.standard);
+        setState(() {});
+        break;
+      case 'notifications':
+        _commitConfig(DeConfig.defaults);
+        widget.notifications?.clear();
+        break;
+      case 'lock':
+        _pinController.clear();
+        _commitConfig(DeConfig.defaults);
+        break;
+      case 'datetime':
+        widget.onTimezone?.call('Europe/Moscow', auto: true);
+        widget.onRegion?.call('ru-RU');
+        setState(() {});
+        break;
+      case 'language':
+        widget.onRegion?.call('ru-RU');
+        setState(() {});
+        break;
+      case 'bluetooth':
+      case 'wifi':
+        final radio = widget.radio;
+        if (radio != null) {
+          unawaited(radio.setPower(
+            item.section == 'wifi' ? RadioKind.wifi : RadioKind.bluetooth,
+            false,
+          ));
+        }
+        setState(() {});
+        break;
+      case 'updates':
+        setState(() {});
+        break;
+      default:
+        setState(() {});
+    }
   }
 
 // ---- sound ----------------------------------------------------------------

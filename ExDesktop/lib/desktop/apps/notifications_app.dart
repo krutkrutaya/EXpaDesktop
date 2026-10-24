@@ -11,7 +11,10 @@ import '../../ui/glass.dart';
 class NotificationsApp extends StatefulWidget {
   final NotificationCenter center;
 
-  const NotificationsApp({super.key, required this.center});
+  /// Opens the app the notification points at (updates/music/network).
+  final ValueChanged<ShellNotification>? onOpen;
+
+  const NotificationsApp({super.key, required this.center, this.onOpen});
 
   @override
   State<NotificationsApp> createState() => _NotificationsAppState();
@@ -124,7 +127,10 @@ class _NotificationsAppState extends State<NotificationsApp> {
                       return GestureDetector(
                         key: ValueKey('notification-${item.id}'),
                         behavior: HitTestBehavior.opaque,
-                        onTap: () => widget.center.markRead(item),
+                        onTap: () {
+                          widget.center.markRead(item);
+                          widget.onOpen?.call(item);
+                        },
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 160),
                           margin: const EdgeInsets.symmetric(vertical: 3),

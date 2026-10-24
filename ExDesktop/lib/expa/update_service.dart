@@ -77,7 +77,7 @@ typedef UpdateFetcher = Future<String> Function(Uri uri);
 class UpdateService {
   UpdateService({
     UpdateFetcher? fetcher,
-    this.repository = 'krutkrutaya/EXpaDesktop',
+    this.repository = 'suptewme/EXpaDesktop',
   }) : _fetcher = fetcher ?? _httpGet;
 
   final UpdateFetcher _fetcher;

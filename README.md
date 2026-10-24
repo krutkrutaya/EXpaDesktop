@@ -423,12 +423,12 @@ The build version lives in a file named **`version_x.y.z.txt`**
 source of truth; the body carries the commit the build came from:
 
 ```
-version=1.4.2
-commit=b642ee3
+version=1.4.3
+commit=b587817
 ```
 
 `lib/expa/version.dart` parses it, `UpdateService` compares it with
-`GET /repos/krutkrutaya/EXpaDesktop/releases?per_page=10` and
+`GET /repos/suptewme/EXpaDesktop/releases?per_page=10` and
 `/commits?per_page=10`; the Updater shows the last ten of each, an
 up-to-date/update-available banner, and a detail sheet per item that can open
 the commit/release in the in-shell Browser. The banner compares the live git
@@ -449,12 +449,12 @@ tree, builds and relaunches. To bump the version, rename the file and update
 Widget tests run under `flutter test`; the window manager, app models, player
 math, library, native parsers and system suites are plain Dart scripts (no
 Flutter needed). `mock_all.dart` runs all of them and prints a single total —
-**1637 checks** with the optional Rust DLLs built, plus **107 widget tests**,
+**1637 checks** with the optional Rust DLLs built, plus **116 widget tests**,
 **9 sysctl Rust tests** and **7 updater Rust tests**.
 
 ```bash
 cd ExDesktop
-flutter test                                 # 107 widget tests
+flutter test                                 # 116 widget tests
 flutter analyze                              # No issues found
 dart run test/mock_all.dart                  # 1637 mock checks
 dart run test/exwm_check.dart                # window manager + snap: 51 checks
